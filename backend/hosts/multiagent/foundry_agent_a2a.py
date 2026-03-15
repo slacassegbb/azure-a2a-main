@@ -3109,6 +3109,19 @@ Answer with just JSON:
                 
                 # Handle task states
                 if task.status.state == TaskState.completed:
+                    # Diagnostic: Log what parts arrived in the completed task
+                    _msg_parts = task.status.message.parts if task.status.message else []
+                    _art_count = len(task.artifacts) if task.artifacts else 0
+                    _part_kinds = []
+                    for _p in _msg_parts:
+                        _pk = getattr(getattr(_p, 'root', _p), 'kind', type(_p).__name__)
+                        if _pk == 'file':
+                            _fu = getattr(getattr(getattr(_p, 'root', _p), 'file', None), 'uri', 'no-uri')
+                            _part_kinds.append(f"file(uri={str(_fu)[:60]})")
+                        else:
+                            _part_kinds.append(str(_pk))
+                    log_info(f"[TASK COMPLETED] {agent_name}: {len(_msg_parts)} message parts [{', '.join(_part_kinds)}], {_art_count} artifacts")
+
                     # IMPORTANT: Clear the task_id so future requests create new tasks
                     # The A2A protocol treats completed tasks as terminal - we can't reuse them
                     log_debug(f"[TASK COMPLETED] Clearing task_id and state for '{agent_name}'")
@@ -4383,9 +4396,19 @@ Answer with just JSON:
             # workflow_orchestration._execute_orchestrated_task reads _latest_processed_parts
             # to extract file URIs before calling send_message.  Without this, user uploads
             # are never passed to the first agent in a workflow.
-            session_context._latest_processed_parts = list(prepared_parts_for_agents)
-            session_context._agent_generated_artifacts = []
-            log_debug(f"Prepared {len(prepared_parts_for_agents)} parts stored in _latest_processed_parts for first workflow step")
+            #
+            # IMPORTANT: Preserve agent-generated FileParts from previous orchestration runs.
+            # Without this, follow-up queries like "mix the audio and video together" lose
+            # the FilePart URIs from agents that ran in a prior turn — the planner knows the
+            # file NAME (from chat history) but the blob URI needed for A2A routing is gone.
+            prev_agent_artifacts = list(getattr(session_context, '_agent_generated_artifacts', []))
+            prev_file_parts = [
+                p for p in getattr(session_context, '_latest_processed_parts', [])
+                if isinstance(p, FilePart) or (hasattr(p, 'root') and isinstance(getattr(p, 'root', None), FilePart))
+            ]
+            session_context._latest_processed_parts = list(prepared_parts_for_agents) + prev_file_parts
+            session_context._agent_generated_artifacts = list(prev_agent_artifacts)
+            log_debug(f"Prepared {len(prepared_parts_for_agents)} new parts + {len(prev_file_parts)} preserved agent file parts in _latest_processed_parts for first workflow step")
             
             # If files were processed, include information about them in the message
             # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents
@@ -6097,6 +6120,10 @@ Workflow completed with result:
             file_parts_only = [p for p in flattened_parts if isinstance(p, FilePart)]
             if file_parts_only:
                 session_context._latest_processed_parts.extend(file_parts_only)
+                for _fp in file_parts_only:
+                    _fp_uri = getattr(getattr(_fp, 'file', None), 'uri', '') or ''
+                    _fp_name = getattr(getattr(_fp, 'file', None), 'name', '?')
+                    log_info(f"[File Routing] Stored FilePart in _latest_processed_parts: {_fp_name} -> {str(_fp_uri)[:80]}")
                 # Also store URI→metadata so send_message can restore names when
                 # constructing FileParts from bare URI strings for downstream agents
                 if not hasattr(session_context, '_file_uri_metadata'):

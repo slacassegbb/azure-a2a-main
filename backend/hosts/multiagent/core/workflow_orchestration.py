@@ -27,7 +27,7 @@ backend_dir = Path(__file__).resolve().parents[2]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from a2a.types import Task, DataPart
+from a2a.types import Task, DataPart, FilePart
 
 from log_config import (
     log_debug,
@@ -1556,8 +1556,15 @@ Analyze the context and return your structured result."""
         # EXPLICIT FILE ROUTING: Extract file URIs from _latest_processed_parts
         file_uris = []
         if hasattr(session_context, '_latest_processed_parts'):
+            parts_count = len(session_context._latest_processed_parts)
+            file_parts_count = sum(1 for p in session_context._latest_processed_parts
+                                   if isinstance(p, FilePart) or (hasattr(p, 'root') and isinstance(getattr(p, 'root', None), FilePart)))
+            log_info(f"[File Routing] _latest_processed_parts: {parts_count} total, {file_parts_count} FileParts")
             file_uris = self._extract_file_uris_from_parts(session_context._latest_processed_parts)
-            log_debug(f"[Agent Mode] Passing {len(file_uris)} file URIs to {recommended_agent}")
+            if file_uris:
+                log_info(f"[File Routing] Passing {len(file_uris)} file URIs to {recommended_agent}: {[u[:80] for u in file_uris]}")
+            else:
+                log_warning(f"[File Routing] No file URIs found for {recommended_agent} (parts={parts_count}, file_parts={file_parts_count})")
         
         # Create tool context and call agent
         dummy_context = DummyToolContext(session_context, self._azure_blob_client)
