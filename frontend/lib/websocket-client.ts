@@ -401,6 +401,7 @@ export class WebSocketClient {
           break;
         case 'session_agent_enabled':
         case 'session_agent_disabled':
+        case 'session_agents_cleared':
           logDebug(`[WebSocket] Received ${eventType} event:`, eventData);
           this.emit(eventType, eventData);
           break;

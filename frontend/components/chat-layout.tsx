@@ -430,6 +430,13 @@ export function ChatLayout() {
       }
     }
 
+    // Handle all agents cleared
+    const handleAgentsCleared = () => {
+      logDebug("[ChatLayout] All agents cleared")
+      setRegisteredAgents([])
+      updateDagFromAgents([])
+    }
+
     // Handle other Event Hub events for logging/debugging
     const handleMessage = (data: any) => {
       logDebug("[ChatLayout] Message event")
@@ -521,6 +528,7 @@ export function ChatLayout() {
       active_workflows_changed: handleActiveWorkflowsChanged,
       session_agent_enabled: handleAgentEnabled,
       session_agent_disabled: handleAgentDisabled,
+      session_agents_cleared: handleAgentsCleared,
       message: handleMessage,
       conversation_created: handleConversationCreated,
       task_updated: handleTaskUpdated,

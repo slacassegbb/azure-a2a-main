@@ -248,6 +248,8 @@ class ConversationServer:
         app.add_api_route('/agents/catalog', self._get_catalog, methods=['GET'])
         app.add_api_route('/agents/session/enable', self._enable_session_agent, methods=['POST'])
         app.add_api_route('/agents/session/disable', self._disable_session_agent, methods=['POST'])
+        app.add_api_route('/agents/session/clear', self._clear_session_agents, methods=['POST'])
+        app.add_api_route('/agents/session/enable-all', self._enable_all_session_agents, methods=['POST'])
         app.add_api_route('/agents/session', self._get_session_agents, methods=['GET'])
 
     # Update API key in manager
@@ -1420,13 +1422,161 @@ class ConversationServer:
         
         return {'status': 'success', 'removed': removed}
 
+    async def _clear_session_agents(self, request: Request):
+        """Clear all agents for a session."""
+        body = await request.json()
+        session_id = body.get('session_id')
+
+        if not session_id:
+            return {'status': 'error', 'message': 'session_id required'}
+
+        session_registry = get_session_registry()
+        count = session_registry.clear_session(session_id)
+
+        # Broadcast session_agents_cleared event via WebSocket
+        if count > 0:
+            try:
+                websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"{websocket_url}/events",
+                        json={
+                            "eventType": "session_agents_cleared",
+                            "contextId": session_id
+                        },
+                        timeout=5.0
+                    )
+                    log_debug(f"Broadcasted session_agents_cleared for session {session_id}")
+            except Exception as e:
+                log_debug(f"Failed to broadcast session_agents_cleared: {e}")
+
+        return {'status': 'success', 'removed_count': count}
+
+    async def _enable_all_session_agents(self, request: Request):
+        """Wake up and register all agents from the global registry for a session."""
+        body = await request.json()
+        session_id = body.get('session_id')
+
+        if not session_id:
+            return {'status': 'error', 'message': 'session_id required'}
+
+        registry = get_registry()
+        all_agents = registry.get_all_agents()
+        session_registry = get_session_registry()
+        websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+
+        if not all_agents:
+            return {'status': 'success', 'enabled': [], 'waking': [], 'failed': []}
+
+        # Use production_url when USE_PROD_REGISTRY is set, otherwise local url
+        use_prod = os.environ.get("USE_PROD_REGISTRY", "false").lower() == "true"
+
+        FAST_TIMEOUT = 5.0
+
+        async def check_and_enable(agent_config: dict) -> dict:
+            """Health-check an agent and enable it if online."""
+            name = agent_config.get('name', 'Unknown')
+            agent_url = agent_config.get('production_url') if use_prod else None
+            agent_url = agent_url or agent_config.get('url', '')
+            if not agent_url:
+                return {'name': name, 'status': 'failed', 'reason': 'no url'}
+
+            health_url = f"{agent_url.rstrip('/')}/health"
+            try:
+                async with httpx.AsyncClient(timeout=FAST_TIMEOUT) as client:
+                    resp = await client.get(health_url)
+                    if resp.status_code == 200:
+                        was_new = session_registry.enable_agent(session_id, agent_config)
+                        if was_new:
+                            try:
+                                import json as _json
+                                safe_config = _json.loads(_json.dumps(agent_config, default=str))
+                                async with httpx.AsyncClient() as ws_client:
+                                    await ws_client.post(
+                                        f"{websocket_url}/events",
+                                        json={
+                                            "eventType": "session_agent_enabled",
+                                            "contextId": session_id,
+                                            "agent": safe_config
+                                        },
+                                        timeout=5.0
+                                    )
+                            except Exception as e:
+                                log_debug(f"[EnableAll] Failed to broadcast for {name}: {e}")
+                        return {'name': name, 'status': 'enabled'}
+            except Exception:
+                pass
+            return {'name': name, 'status': 'waking', 'url': agent_url}
+
+        # Round 1: Fast concurrent health check (also triggers cold-start wake-up)
+        results = await asyncio.gather(*(check_and_enable(agent) for agent in all_agents))
+
+        enabled = [r['name'] for r in results if r['status'] == 'enabled']
+        waking = [r for r in results if r['status'] == 'waking']
+        failed = [r['name'] for r in results if r['status'] == 'failed']
+
+        log_info(f"[EnableAll] session={session_id[:8]}... enabled={len(enabled)}, waking={len(waking)}, failed={len(failed)}")
+
+        # Round 2: Poll waking agents in the background (don't block the response)
+        if waking:
+            async def poll_waking_agents():
+                POLL_INTERVAL = 10.0
+                POLL_MAX_SECONDS = 90.0
+                pending = {r['name']: r['url'] for r in waking}
+                elapsed = 0.0
+                while pending and elapsed < POLL_MAX_SECONDS:
+                    await asyncio.sleep(POLL_INTERVAL)
+                    elapsed += POLL_INTERVAL
+                    newly_online = []
+                    for name, url in list(pending.items()):
+                        health_url = f"{url.rstrip('/')}/health"
+                        try:
+                            async with httpx.AsyncClient(timeout=FAST_TIMEOUT) as client:
+                                resp = await client.get(health_url)
+                                if resp.status_code == 200:
+                                    # Find the full config for this agent
+                                    agent_config = next((a for a in all_agents if a.get('name') == name), None)
+                                    if agent_config:
+                                        was_new = session_registry.enable_agent(session_id, agent_config)
+                                        if was_new:
+                                            try:
+                                                import json as _json
+                                                safe_config = _json.loads(_json.dumps(agent_config, default=str))
+                                                async with httpx.AsyncClient() as ws_client:
+                                                    await ws_client.post(
+                                                        f"{websocket_url}/events",
+                                                        json={
+                                                            "eventType": "session_agent_enabled",
+                                                            "contextId": session_id,
+                                                            "agent": safe_config
+                                                        },
+                                                        timeout=5.0
+                                                    )
+                                            except Exception as e:
+                                                log_debug(f"[EnableAll Poll] Failed to broadcast for {name}: {e}")
+                                    log_info(f"[EnableAll Poll] '{name}' came online after {elapsed:.0f}s")
+                                    newly_online.append(name)
+                        except Exception:
+                            pass
+                    for name in newly_online:
+                        del pending[name]
+
+            asyncio.create_task(poll_waking_agents())
+
+        return {
+            'status': 'success',
+            'enabled': enabled,
+            'waking': [r['name'] for r in waking],
+            'failed': failed
+        }
+
     async def _get_session_agents(self, request: Request):
         """Get all agents enabled for a session."""
         session_id = request.query_params.get('session_id')
-        
+
         if not session_id:
             return {'status': 'error', 'message': 'session_id required'}
-        
+
         session_registry = get_session_registry()
         agents = session_registry.get_session_agents(session_id)
         return {'status': 'success', 'agents': agents}

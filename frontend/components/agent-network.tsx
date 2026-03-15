@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X, Plus } from "lucide-react"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
 import { SessionInvitationNotification } from "./session-invite"
@@ -180,6 +180,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   
   // Host agent model selection
   const [hostModel, setHostModel] = useState("gpt-4o")
+
+  // Register all agents state
+  const [isRegisteringAll, setIsRegisteringAll] = useState(false)
 
   // Agent status tracking state
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(new Map())
@@ -751,6 +754,80 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       console.error('Error clearing memory:', error)
     } finally {
       setIsClearingMemory(false)
+    }
+  }
+
+  const handleClearAllAgents = async () => {
+    if (!confirm('Are you sure you want to remove all agents and clear memory? This cannot be undone.')) {
+      return
+    }
+
+    try {
+      const sessionId = getOrCreateSessionId()
+      const baseUrl = API_BASE_URL
+
+      // Clear all agents from session
+      const clearResponse = await fetch(`${baseUrl}/agents/session/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      })
+
+      if (!clearResponse.ok) {
+        const data = await clearResponse.json()
+        console.error('Failed to clear agents:', data.message)
+        alert('Failed to clear agents: ' + data.message)
+        return
+      }
+
+      // Clear memory
+      await fetch(`${baseUrl}/clear-memory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: sessionId })
+      })
+
+      // Emit event to update UI
+      emit('session_agents_cleared', {})
+    } catch (error) {
+      console.error('Error clearing agents:', error)
+      alert('Error clearing agents: ' + error)
+    }
+  }
+
+  const handleRegisterAllAgents = async () => {
+    setIsRegisteringAll(true)
+    try {
+      const sessionId = getOrCreateSessionId()
+      const baseUrl = API_BASE_URL
+
+      const response = await fetch(`${baseUrl}/agents/session/enable-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        console.error('Failed to register all agents:', data.message)
+        alert('Failed to register agents: ' + data.message)
+        return
+      }
+
+      const data = await response.json()
+      const enabledCount = data.enabled?.length || 0
+      const wakingCount = data.waking?.length || 0
+
+      if (wakingCount > 0) {
+        logDebug(`[AgentNetwork] ${enabledCount} agents registered, ${wakingCount} waking up: ${data.waking.join(', ')}`)
+      } else {
+        logDebug(`[AgentNetwork] All ${enabledCount} agents registered`)
+      }
+    } catch (error) {
+      console.error('Error registering all agents:', error)
+      alert('Error registering agents: ' + error)
+    } finally {
+      setIsRegisteringAll(false)
     }
   }
 
@@ -1564,8 +1641,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                 <div className="mb-2">
                   <div className="flex items-center justify-between mb-2 px-1">
                     <CollapsibleTrigger asChild>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         className="flex items-center gap-2 p-0 hover:bg-transparent"
                       >
                         <Bot className="h-4 w-4 text-muted-foreground" />
@@ -1577,6 +1654,45 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         )}
                       </Button>
                     </CollapsibleTrigger>
+                    <div className="flex items-center gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 hover:bg-primary/10 hover:text-primary"
+                            onClick={handleRegisterAllAgents}
+                            disabled={isRegisteringAll}
+                          >
+                            {isRegisteringAll ? (
+                              <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Plus className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">
+                          <p>Register all agents</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      {registeredAgents.length > 0 && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 hover:bg-destructive/10 hover:text-destructive"
+                              onClick={handleClearAllAgents}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">
+                            <p>Clear all agents and memory</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
                   </div>
                 </div>
                 

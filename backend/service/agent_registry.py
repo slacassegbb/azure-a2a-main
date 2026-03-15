@@ -828,6 +828,15 @@ class SessionAgentRegistry:
             for a in self._sessions.get(session_id, [])
         )
     
+    def clear_session(self, session_id: str) -> int:
+        """Clear all agents for a specific session. Returns the number of agents removed."""
+        if session_id not in self._sessions:
+            return 0
+        count = len(self._sessions[session_id])
+        del self._sessions[session_id]
+        log_info(f"[SessionAgentRegistry] Cleared {count} agents from session {session_id}")
+        return count
+
     def clear_all(self):
         """Clear all session agents. Called on server restart."""
         count = sum(len(agents) for agents in self._sessions.values())
