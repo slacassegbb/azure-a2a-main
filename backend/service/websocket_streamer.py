@@ -476,7 +476,7 @@ class WebSocketStreamer:
                         })
                     elif hasattr(part, 'file') and part.file:
                         file_obj = part.file
-                        mime_type = getattr(file_obj, 'mimeType', '')
+                        mime_type = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', '') or ''
                         file_dict = {
                             "type": "file",
                             "content": f"File: {getattr(file_obj, 'name', 'unknown')}",

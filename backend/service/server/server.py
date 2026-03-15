@@ -1511,9 +1511,21 @@ class ConversationServer:
         # Round 1: Fast concurrent health check (also triggers cold-start wake-up)
         results = await asyncio.gather(*(check_and_enable(agent) for agent in all_agents))
 
-        enabled = [r['name'] for r in results if r['status'] == 'enabled']
+        enabled_results = [r for r in results if r['status'] == 'enabled']
+        enabled = [r['name'] for r in enabled_results]
         waking = [r for r in results if r['status'] == 'waking']
         failed = [r['name'] for r in results if r['status'] == 'failed']
+
+        # Build full agent configs for the response so frontend can update immediately
+        import json as _json_resp
+        enabled_configs = []
+        for r in enabled_results:
+            agent_config = next((a for a in all_agents if a.get('name') == r['name']), None)
+            if agent_config:
+                try:
+                    enabled_configs.append(_json_resp.loads(_json_resp.dumps(agent_config, default=str)))
+                except Exception:
+                    pass
 
         log_info(f"[EnableAll] session={session_id[:8]}... enabled={len(enabled)}, waking={len(waking)}, failed={len(failed)}")
 
@@ -1566,6 +1578,7 @@ class ConversationServer:
         return {
             'status': 'success',
             'enabled': enabled,
+            'enabled_configs': enabled_configs,
             'waking': [r['name'] for r in waking],
             'failed': failed
         }

@@ -1128,9 +1128,10 @@ class FoundryHostManager(ApplicationManager):
                                 if file_uri:
                                     log_debug(f"[VideoRemix] Found FilePart with URI: {file_uri[-80:]}")
                                     # Determine type based on mimeType or file extension
-                                    mime_type = getattr(file_obj, 'mimeType', '')
+                                    # A2A SDK uses snake_case (mime_type) in Python, camelCase (mimeType) in JSON
+                                    mime_type = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', '') or ''
                                     file_name = getattr(file_obj, 'name', 'agent-artifact')
-                                    log_debug(f"[VideoRemix] FilePart: mimeType={mime_type}, name={file_name}")
+                                    log_debug(f"[VideoRemix] FilePart: mime_type={mime_type}, name={file_name}")
                                     # Check mimeType first, then fall back to extension
                                     if mime_type.startswith('video/'):
                                         part_type = "video"
@@ -1166,7 +1167,12 @@ class FoundryHostManager(ApplicationManager):
                                         "uri": file_uri,
                                         "fileName": file_name if file_name != 'agent-artifact' else default_name,
                                         "fileSize": getattr(file_obj, 'size', 0),
-                                        "mediaType": mime_type or ("video/mp4" if part_type == "video" else "application/octet-stream"),
+                                        "mediaType": mime_type or (
+                                        "video/mp4" if part_type == "video"
+                                        else "image/png" if part_type == "image"
+                                        else "audio/mpeg" if part_type == "audio"
+                                        else "application/octet-stream"
+                                    ),
                                         "storageType": "azure_blob",
                                         "status": "completed",
                                     }

@@ -811,6 +811,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
         const data = await response.json()
         console.error('Failed to register all agents:', data.message)
         alert('Failed to register agents: ' + data.message)
+        setIsRegisteringAll(false)
         return
       }
 
@@ -818,8 +819,49 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       const enabledCount = data.enabled?.length || 0
       const wakingCount = data.waking?.length || 0
 
+      // Immediately update UI with enabled agent configs (don't rely on WebSocket)
+      if (data.enabled_configs?.length > 0) {
+        for (const agentConfig of data.enabled_configs) {
+          emit('session_agent_enabled', { agent: agentConfig })
+        }
+      }
+
       if (wakingCount > 0) {
         logDebug(`[AgentNetwork] ${enabledCount} agents registered, ${wakingCount} waking up: ${data.waking.join(', ')}`)
+        // Keep spinner on — poll until waking agents come online or timeout
+        const wakingNames = new Set<string>(data.waking)
+        const POLL_INTERVAL = 8000   // 8s between polls
+        const MAX_WAIT = 100000      // 100s total (backend polls for 90s)
+        let elapsed = 0
+        while (wakingNames.size > 0 && elapsed < MAX_WAIT) {
+          await new Promise(r => setTimeout(r, POLL_INTERVAL))
+          elapsed += POLL_INTERVAL
+          try {
+            const pollResp = await fetch(`${baseUrl}/agents/session/enable-all`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: sessionId })
+            })
+            if (pollResp.ok) {
+              const pollData = await pollResp.json()
+              // Add any newly enabled agents to UI
+              if (pollData.enabled_configs?.length > 0) {
+                for (const agentConfig of pollData.enabled_configs) {
+                  if (wakingNames.has(agentConfig.name)) {
+                    emit('session_agent_enabled', { agent: agentConfig })
+                    wakingNames.delete(agentConfig.name)
+                    logDebug(`[AgentNetwork] Waking agent came online: ${agentConfig.name}`)
+                  }
+                }
+              }
+            }
+          } catch {
+            // Ignore poll errors, keep trying
+          }
+        }
+        if (wakingNames.size > 0) {
+          logDebug(`[AgentNetwork] Timed out waiting for: ${Array.from(wakingNames).join(', ')}`)
+        }
       } else {
         logDebug(`[AgentNetwork] All ${enabledCount} agents registered`)
       }
