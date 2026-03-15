@@ -299,7 +299,7 @@ class WorkflowOrchestration:
                     file_obj = part.root.file
                     file_uri = getattr(file_obj, 'uri', None) or getattr(file_obj, 'url', None)
                     file_name = getattr(file_obj, 'name', 'artifact')
-                    content_type = getattr(file_obj, 'mimeType', None)
+                    content_type = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', None)
 
                 if not file_uri or not str(file_uri).startswith(('http://', 'https://')):
                     continue
@@ -340,7 +340,7 @@ class WorkflowOrchestration:
 
             file_uri = getattr(file_obj, 'uri', None) or getattr(file_obj, 'url', None)
             file_name = getattr(file_obj, 'name', 'artifact')
-            content_type = getattr(file_obj, 'mimeType', None)
+            content_type = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', None)
             if file_uri and str(file_uri).startswith(('http://', 'https://')):
                 if not content_type:
                     ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''

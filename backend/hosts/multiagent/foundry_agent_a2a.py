@@ -1491,7 +1491,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     if file_obj:
                         file_name = getattr(file_obj, 'name', 'unknown_file')
                         file_uri = getattr(file_obj, 'uri', None)
-                        file_mime = getattr(file_obj, 'mimeType', None)
+                        file_mime = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', None)
                         if file_uri:
                             files.append({
                                 "name": file_name,
@@ -3205,7 +3205,7 @@ Answer with just JSON:
                                     if file_obj:
                                         file_uri = str(getattr(file_obj, 'uri', ''))
                                         file_name = getattr(file_obj, 'name', 'agent-artifact')
-                                        mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
+                                        mime_type = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', 'application/octet-stream')
                                         if file_uri.startswith(('http://', 'https://')):
                                             log_debug(f"Emitting file artifact event for completed task: {file_name}")
                                             # Files are already in blob storage at uploads/{session_id}/
@@ -3244,7 +3244,7 @@ Answer with just JSON:
                                 if file_obj:
                                     file_uri = str(getattr(file_obj, 'uri', ''))
                                     file_name = getattr(file_obj, 'name', 'agent-artifact')
-                                    mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
+                                    mime_type = getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', 'application/octet-stream')
                                     if file_uri.startswith(('http://', 'https://')):
                                         file_artifacts_to_index.append({
                                             'uri': file_uri,
@@ -6364,7 +6364,7 @@ Workflow completed with result:
 
                 # Return a DataPart with artifact metadata + extracted content so
                 # run_conversation_with_parts can include it in enhanced_message
-                file_mime = getattr(part.root.file, 'mimeType', 'application/octet-stream')
+                file_mime = getattr(part.root.file, 'mime_type', None) or getattr(part.root.file, 'mimeType', 'application/octet-stream')
                 result_data = {
                     'artifact-id': file_id,
                     'artifact-uri': str(file_uri),
@@ -6435,7 +6435,7 @@ Workflow completed with result:
                     'kind': 'file',
                     'file': {
                         'name': file_id,
-                        'mimeType': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                        'mimeType': getattr(part.root.file, 'mime_type', None) or getattr(part.root.file, 'mimeType', 'application/octet-stream'),
                         'data': file_bytes,
                         'force_blob': is_mask_artifact,
                         **({'role': str(file_role_attr)} if file_role_attr else {}),
@@ -6473,7 +6473,7 @@ Workflow completed with result:
                     artifact_uri = artifact_info.get('artifact_uri') or getattr(part.root.file, 'uri', None)
                 
                 # Build mask parts using helper
-                mime_type = getattr(part.root.file, 'mimeType', 'application/octet-stream')
+                mime_type = getattr(part.root.file, 'mime_type', None) or getattr(part.root.file, 'mimeType', 'application/octet-stream')
                 if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
                     mime_type = artifact_response.data.get('media-type', mime_type)
                 
@@ -6529,7 +6529,7 @@ Workflow completed with result:
                         kind='file',
                         file=FileWithUri(
                             name=file_id,
-                            mimeType=artifact_response.data.get('media-type', getattr(part.root.file, 'mimeType', 'application/octet-stream')),
+                            mimeType=artifact_response.data.get('media-type', getattr(part.root.file, 'mime_type', None) or getattr(part.root.file, 'mimeType', 'application/octet-stream')),
                             uri=artifact_uri,
                             role=str(file_role_attr).lower() if file_role_attr else None,
                         ),
