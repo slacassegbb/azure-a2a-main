@@ -2799,7 +2799,8 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - **COMPLETION CRITERIA** - Mark goal_status="completed" ONLY when:
   1. All required workflow steps have been attempted (each step dispatched to its agent once), AND
   2. There are no remaining unattempted workflow steps
-- A step counts as "attempted" even if the agent hit rate limits or returned an error — do NOT retry it
+- A step counts as "attempted" even if the agent hit rate limits or returned an error
+- **RETRY POLICY**: If an agent returns a clear, actionable error (e.g., "unsupported value X, use Y instead"), you SHOULD retry that step ONCE with corrected parameters. Do NOT retry rate limit errors or vague failures — only retry when the error message tells you exactly how to fix the input.
 - **WARNING**: Do NOT mark as completed prematurely!
 - If ANY required workflow step has not been attempted yet, goal_status MUST be "incomplete" and you must create the next task"""
         else:
@@ -2984,7 +2985,15 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 task_entry.pop("planner_metadata", None)  # Duplicates task_description + adds output_guidance bloat
                 task_entry.pop("created_at", None)
                 task_entry.pop("updated_at", None)
-                task_entry.pop("error_message", None)
+                # Keep error_message for failed tasks so the planner can make informed retry decisions
+                # (e.g., "unsupported duration 10s, use 4/8/12" → planner retries with corrected params)
+                if task_entry.get("state") != "failed":
+                    task_entry.pop("error_message", None)
+                elif task_entry.get("error_message"):
+                    # Truncate long error messages to avoid context bloat
+                    err = task_entry["error_message"]
+                    if len(err) > 300:
+                        task_entry["error_message"] = err[:300] + "..."
 
             # In workflow mode, add an explicit step-completion map so the
             # LLM doesn't have to parse [Step X] prefixes from descriptions.
