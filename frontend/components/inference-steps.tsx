@@ -34,8 +34,11 @@ interface AgentInfo {
   output: string | null
   progressMessages: string[]
   extractedFiles: { name: string; url?: string; type?: string }[]
+  documentEvents: string[]  // Document extraction/indexing messages grouped under this card
   stepNumber?: string  // Extracted from [Step X] in content, e.g. "2", "2a", "2b"
   mapKey: string       // Unique key for React rendering (handles parallel same-agent cards)
+  retryCount: number   // How many times this step was retried (0 = no retries)
+  retriedError?: string // The error from the failed attempt (if retried)
 }
 
 interface OrchestratorActivity {
@@ -152,13 +155,14 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           }
           orchestratorStatus = "planning"
         } else if (phase === "document_indexing" || phase === "document_extraction" || phase === "document_extraction_complete") {
-          // Document events fire during agent execution (before agent_complete),
-          // so use lastRunningAgentKey to place them after the correct agent card.
-          connectors.push({
-            kind: "document" as any,
-            text: content,
-            afterAgentKey: lastRunningAgentKey || lastCompletedAgentKey,
-          })
+          // Document events → attach to the agent card that produced the files
+          const targetKey = lastRunningAgentKey || lastCompletedAgentKey
+          if (targetKey && agentMap.has(targetKey)) {
+            const targetAgent = agentMap.get(targetKey)!
+            if (!targetAgent.documentEvents.includes(content)) {
+              targetAgent.documentEvents.push(content)
+            }
+          }
         } else if (phase === "reflection") {
           // Just a status spinner — don't surface as activity
           orchestratorStatus = "reflecting"
@@ -236,9 +240,10 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     if (agentName.includes("foundry") || agentName.includes("host-agent")) continue
     
     // Handle regular agents - support multiple invocations of the same agent
-    // Two strategies:
+    // Three strategies:
     // 1. Parallel calls: backend sends parallel_call_id in metadata → use as grouping key
-    // 2. Sequential calls: detect when a completed agent gets new dispatch events
+    // 2. Retry after error: agent errored then re-invoked for same step → merge into original card
+    // 3. Sequential calls: detect when a completed agent gets new dispatch events → new card
     const parallelCallId = step.metadata?.parallel_call_id
     let mapKey: string
 
@@ -250,9 +255,17 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
       mapKey = currentAgentKey.get(agentName) || agentName
       if (agentMap.has(mapKey)) {
         const existing = agentMap.get(mapKey)!
-        // If the agent already completed and we see a new dispatch event, it's a new invocation
         const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
-        if (existing.status === "complete" && isNewDispatchEvent) {
+        if (existing.status === "error" && isNewDispatchEvent) {
+          // RETRY: agent errored and is being re-invoked → collapse into same card
+          existing.retriedError = existing.output || undefined
+          existing.retryCount++
+          existing.status = "running"
+          existing.output = null
+          existing.progressMessages = []
+          // Keep the same mapKey — don't create a new card
+        } else if (existing.status === "complete" && isNewDispatchEvent) {
+          // New invocation of a completed agent (different step)
           let invocation = 2
           while (agentMap.has(`${agentName}::${invocation}`)) {
             const prev = agentMap.get(`${agentName}::${invocation}`)!
@@ -279,8 +292,10 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         output: null,
         progressMessages: [],
         extractedFiles: [],
+        documentEvents: [],
         stepNumber: stepMatch ? stepMatch[1] : undefined,
         mapKey,
+        retryCount: 0,
       })
     }
 
@@ -461,73 +476,78 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
   )
 }
 
-function InlineConnector({ connector }: { connector: StepConnector }) {
-  if (connector.kind === "reflection") {
-    return (
-      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-violet-500/5 border-l-2 border-violet-500/30">
-        <Eye className="h-3 w-3 text-violet-400/70 flex-shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <p className="text-[11px] text-violet-300/90 leading-relaxed break-words">{connector.text}</p>
-          {connector.detail && (
-            <p className="text-[10px] text-muted-foreground mt-0.5">{connector.detail}</p>
-          )}
-        </div>
-      </div>
-    )
+/** Render a group of connectors as a collapsible block between agent cards */
+function ConnectorGroup({ connectors: items }: { connectors: StepConnector[] }) {
+  if (items.length === 0) return null
+
+  // Doom loops always show expanded (they're critical)
+  const hasDoomLoop = items.some(c => c.kind === "doom_loop")
+
+  const getIcon = (kind: StepConnector["kind"]) => {
+    switch (kind) {
+      case "reflection": return <Eye className="h-3 w-3 text-violet-400/70 flex-shrink-0 mt-0.5" />
+      case "critique": return <ShieldCheck className="h-3 w-3 text-amber-400/80 flex-shrink-0 mt-0.5" />
+      case "doom_loop": return <OctagonX className="h-3 w-3 text-red-400 flex-shrink-0 mt-0.5" />
+      case "reasoning": return <Zap className="h-3 w-3 text-blue-400/70 flex-shrink-0 mt-0.5" />
+      case "document": return <FileText className="h-3 w-3 text-emerald-400/70 flex-shrink-0 mt-0.5" />
+    }
   }
 
-  if (connector.kind === "critique") {
-    return (
-      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-amber-500/5 border-l-2 border-amber-500/40">
-        <ShieldCheck className="h-3 w-3 text-amber-400/80 flex-shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <p className="text-[11px] text-amber-300/90 leading-relaxed break-words">{connector.text}</p>
-          {connector.detail && (
-            <p className="text-[10px] text-muted-foreground mt-0.5">{connector.detail}</p>
-          )}
-        </div>
-      </div>
-    )
+  const getStyle = (kind: StepConnector["kind"]) => {
+    switch (kind) {
+      case "reflection": return "bg-violet-500/5 border-l-2 border-violet-500/30"
+      case "critique": return "bg-amber-500/5 border-l-2 border-amber-500/40"
+      case "doom_loop": return "bg-red-500/10 border-l-2 border-red-500/50"
+      case "reasoning": return "bg-blue-500/5 border-l-2 border-blue-500/30"
+      case "document": return "bg-emerald-500/5 border-l-2 border-emerald-500/30"
+    }
   }
 
-  if (connector.kind === "doom_loop") {
-    return (
-      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-red-500/10 border-l-2 border-red-500/50">
-        <OctagonX className="h-3 w-3 text-red-400 flex-shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <p className="text-[11px] text-red-300 leading-relaxed break-words">{connector.text}</p>
-        </div>
-      </div>
-    )
+  const getTextColor = (kind: StepConnector["kind"]) => {
+    switch (kind) {
+      case "reflection": return "text-violet-300/90"
+      case "critique": return "text-amber-300/90"
+      case "doom_loop": return "text-red-300"
+      case "reasoning": return "text-blue-300/90"
+      case "document": return "text-emerald-300/90"
+    }
   }
 
-  if (connector.kind === "reasoning") {
-    return (
-      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-blue-500/5 border-l-2 border-blue-500/30">
-        <Zap className="h-3 w-3 text-blue-400/70 flex-shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <p className="text-[11px] text-blue-300/90 leading-relaxed break-words">{connector.text}</p>
-        </div>
+  const summaryLabel = items.length === 1
+    ? (items[0].kind === "reasoning" ? "Orchestrator reasoning" :
+       items[0].kind === "reflection" ? "Orchestrator reflection" :
+       items[0].kind === "critique" ? "Orchestrator critique" :
+       items[0].kind === "doom_loop" ? "Loop detected" : "Orchestrator note")
+    : `${items.length} orchestrator notes`
+
+  const renderItem = (c: StepConnector, i: number) => (
+    <div key={i} className={`flex items-start gap-2 mx-3 my-1 px-3 py-2 rounded-md ${getStyle(c.kind)}`}>
+      {getIcon(c.kind)}
+      <div className="min-w-0">
+        <p className={`text-[11px] ${getTextColor(c.kind)} leading-relaxed break-words`}>{c.text}</p>
+        {c.detail && <p className="text-[10px] text-muted-foreground mt-0.5">{c.detail}</p>}
       </div>
-    )
+    </div>
+  )
+
+  // Doom loops render expanded (critical info)
+  if (hasDoomLoop) {
+    return <div className="my-1">{items.map(renderItem)}</div>
   }
 
-  if (connector.kind === "document") {
-    return (
-      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-emerald-500/5 border-l-2 border-emerald-500/30">
-        <FileText className="h-3 w-3 text-emerald-400/70 flex-shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <p className="text-[11px] text-emerald-300/90 leading-relaxed break-words">{connector.text}</p>
-        </div>
-      </div>
-    )
-  }
-
-  return null
+  // Everything else is collapsible
+  return (
+    <details className="my-1 mx-3">
+      <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground/70 select-none py-1">
+        {summaryLabel}
+      </summary>
+      <div className="mt-0.5">{items.map(renderItem)}</div>
+    </details>
+  )
 }
 
 function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber: number; isLive: boolean }) {
-  const { displayName, color, taskDescription, status, output, progressMessages, extractedFiles } = agent
+  const { displayName, color, taskDescription, status, output, progressMessages, extractedFiles, documentEvents, retryCount, retriedError } = agent
   
   const isRunning = status === "running"
   const isComplete = status === "complete"
@@ -603,6 +623,11 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           {isCancelled && <span className="text-[10px] text-gray-600">Cancelled</span>}
           {isWaiting && <span className="text-[10px] text-amber-600">Awaiting response</span>}
           {isRunning && isLive && <span className="text-[10px] text-primary">Working...</span>}
+          {retryCount > 0 && (
+            <span className="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-full">
+              {retryCount} {retryCount === 1 ? "retry" : "retries"}
+            </span>
+          )}
         </div>
 
         {cleanTaskDesc && (
@@ -697,6 +722,35 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
             <div className="text-foreground/80 whitespace-pre-wrap">{cleanOutput}</div>
           </div>
         )}
+
+        {/* Collapsed retry error — show what failed before the successful retry */}
+        {retriedError && (
+          <details className="ml-6 mt-1.5">
+            <summary className="text-[10px] text-amber-500 cursor-pointer hover:text-amber-400 select-none">
+              View previous failed attempt
+            </summary>
+            <div className="mt-1 rounded-md px-3 py-2 text-xs border-l-2 border-red-500/30 bg-red-500/5 max-h-[150px] overflow-y-auto">
+              <div className="text-red-400/80 whitespace-pre-wrap">{retriedError}</div>
+            </div>
+          </details>
+        )}
+
+        {/* Document extraction events grouped under this agent */}
+        {documentEvents.length > 0 && (
+          <details className="ml-6 mt-1.5">
+            <summary className="text-[10px] text-emerald-500 cursor-pointer hover:text-emerald-400 select-none flex items-center gap-1">
+              <FileText className="h-3 w-3" />
+              {documentEvents.length} document{documentEvents.length !== 1 ? "s" : ""} processed
+            </summary>
+            <div className="mt-1 space-y-1">
+              {documentEvents.map((evt, i) => (
+                <div key={i} className="rounded-md px-3 py-1.5 text-[11px] border-l-2 border-emerald-500/30 bg-emerald-500/5 max-h-[150px] overflow-y-auto">
+                  <div className="text-emerald-300/80 whitespace-pre-wrap">{evt}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </div>
     </div>
   )
@@ -740,17 +794,16 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
           
           <div className="space-y-1 pr-1">
-            {connectors
-              .filter(c => !c.afterAgentKey)
-              .map((c, ci) => <InlineConnector key={`orphan-conn-${ci}`} connector={c} />)}
-            {agents.map((agent: AgentInfo, i: number) => (
-              <React.Fragment key={agent.mapKey}>
-                <AgentCard agent={agent} stepNumber={i + 1} isLive={true} />
-                {connectors
-                  .filter(c => c.afterAgentKey === agent.mapKey)
-                  .map((c, ci) => <InlineConnector key={`${agent.mapKey}-conn-${ci}`} connector={c} />)}
-              </React.Fragment>
-            ))}
+            {(() => { const orphans = connectors.filter(c => !c.afterAgentKey); return orphans.length > 0 ? <ConnectorGroup key="orphan-conns" connectors={orphans} /> : null })()}
+            {agents.map((agent: AgentInfo, i: number) => {
+              const agentConnectors = connectors.filter(c => c.afterAgentKey === agent.mapKey)
+              return (
+                <React.Fragment key={agent.mapKey}>
+                  <AgentCard agent={agent} stepNumber={i + 1} isLive={true} />
+                  {agentConnectors.length > 0 && <ConnectorGroup connectors={agentConnectors} />}
+                </React.Fragment>
+              )
+            })}
           </div>
         </div>
       </div>
@@ -793,17 +846,16 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
         <AccordionContent>
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
           <div className="space-y-1 pt-1 pb-2">
-            {connectors
-              .filter(c => !c.afterAgentKey)
-              .map((c, ci) => <InlineConnector key={`orphan-conn-${ci}`} connector={c} />)}
-            {agents.map((agent: AgentInfo, i: number) => (
-              <React.Fragment key={agent.mapKey}>
-                <AgentCard agent={agent} stepNumber={i + 1} isLive={false} />
-                {connectors
-                  .filter(c => c.afterAgentKey === agent.mapKey)
-                  .map((c, ci) => <InlineConnector key={`${agent.mapKey}-conn-${ci}`} connector={c} />)}
-              </React.Fragment>
-            ))}
+            {(() => { const orphans = connectors.filter(c => !c.afterAgentKey); return orphans.length > 0 ? <ConnectorGroup key="orphan-conns" connectors={orphans} /> : null })()}
+            {agents.map((agent: AgentInfo, i: number) => {
+              const agentConnectors = connectors.filter(c => c.afterAgentKey === agent.mapKey)
+              return (
+                <React.Fragment key={agent.mapKey}>
+                  <AgentCard agent={agent} stepNumber={i + 1} isLive={false} />
+                  {agentConnectors.length > 0 && <ConnectorGroup connectors={agentConnectors} />}
+                </React.Fragment>
+              )
+            })}
           </div>
         </AccordionContent>
       </AccordionItem>
