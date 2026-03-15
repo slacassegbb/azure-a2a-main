@@ -2865,8 +2865,17 @@ Answer with just JSON:
             start_time = time.time()
             
             # Create a user-friendly query preview for status messages
-            query_preview = message[:200] + "..." if len(message) > 200 else message
-            query_preview = " ".join(query_preview.split())
+            # Extract just the task description from structured prompts (## Your Task\n...)
+            import re as _re
+            _task_match = _re.search(r'## Your Task\s*\n(.+?)(?:\n##|\n\n|$)', message, _re.DOTALL)
+            if _task_match:
+                query_preview = _task_match.group(1).strip()
+            else:
+                # Fallback: use first line or first 150 chars, skip markdown headers
+                _lines = [l.strip() for l in message.split('\n') if l.strip() and not l.strip().startswith('#')]
+                query_preview = _lines[0] if _lines else message[:150]
+            if len(query_preview) > 150:
+                query_preview = query_preview[:150] + "..."
             
             # ========================================================================
             # EMIT WORKFLOW MESSAGE: Clear "Calling agent" message for workflow panel
@@ -2998,18 +3007,27 @@ Answer with just JSON:
                                             state_value = state.value
                                         else:
                                             state_value = str(state)
-                                        
+
                                         # Calculate elapsed time for context
                                         elapsed_seconds = int(time.time() - start_time)
                                         elapsed_str = f" ({elapsed_seconds}s)" if elapsed_seconds >= 5 else ""
-                                        
-                                        # Make status messages friendly and personalized with user's query context
+
+                                        # Make status messages friendly with clean task preview
                                         if state_value == "working":
-                                            status_text = f"{agent_name} is working on: \"{query_preview}\"{elapsed_str}"
+                                            status_text = f"Working on: {query_preview}{elapsed_str}"
                                         elif state_value == "submitted":
-                                            status_text = f"Request sent to {agent_name}: \"{query_preview}\""
+                                            return self._default_task_callback(event, agent_card)  # Skip UI — "working on" will show the task
                                         else:
-                                            status_text = f"{agent_name}: {state_value}{elapsed_str}"
+                                            status_text = f"{state_value}{elapsed_str}"
+
+                                # Clean up status_text from remote agents that embed raw structured prompts
+                                # e.g. "Agent is working on: ## Role You are the **Agent**..."
+                                _st_lower = status_text.lower()
+                                if ("is working on" in _st_lower or "request sent to" in _st_lower) and "## " in status_text:
+                                    if "is working on" in _st_lower:
+                                        status_text = f"Working on: {query_preview}"
+                                    else:
+                                        return self._default_task_callback(event, agent_card)  # Skip "Request sent" — redundant
                                 
                                 # Filter out noisy/internal status messages before sending to UI
                                 status_lower = status_text.lower().strip()
@@ -3055,7 +3073,7 @@ Answer with just JSON:
                         elif event_kind == 'task':
                             # Initial task creation - USE HOST'S contextId for routing!
                             asyncio.create_task(self._emit_granular_agent_event(
-                                agent_name, f"{agent_name} has started working on: \"{query_preview}\"", host_context_id,
+                                agent_name, f"Started: {query_preview}", host_context_id,
                                 event_type="agent_progress"
                             ))
                     
