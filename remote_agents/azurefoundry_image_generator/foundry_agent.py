@@ -1247,6 +1247,21 @@ Always validate the prompt for safety before invoking the tool.
         prompt = payload.get("prompt")
         style = payload.get("style")
         size = payload.get("size", "1024x1024")
+        # Validate resolution — gpt-image-1 only supports specific sizes
+        VALID_SIZES = {"1024x1024", "1024x1536", "1536x1024", "auto"}
+        if size not in VALID_SIZES:
+            # Map common landscape/portrait ratios to closest valid size
+            try:
+                w, h = map(int, size.lower().split("x"))
+                if w > h:
+                    size = "1536x1024"  # Landscape
+                elif h > w:
+                    size = "1024x1536"  # Portrait
+                else:
+                    size = "1024x1024"  # Square
+            except (ValueError, AttributeError):
+                size = "1024x1024"
+            logger.warning(f"Unsupported resolution '{payload.get('size')}', using '{size}' instead")
         n_images = int(payload.get("n", 1))
         
         # SAFETY: Force n=1 for agent-to-agent mode to prevent multiple image generation

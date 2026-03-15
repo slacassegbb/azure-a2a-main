@@ -156,7 +156,21 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           orchestratorStatus = "planning"
         } else if (phase === "document_indexing" || phase === "document_extraction" || phase === "document_extraction_complete") {
           // Document events → attach to the agent card that produced the files
-          const targetKey = lastRunningAgentKey || lastCompletedAgentKey
+          // Use source_agent + parallel_call_id from metadata for correct routing in parallel execution
+          const sourceAgent = step.metadata?.source_agent
+          const docParallelId = step.metadata?.parallel_call_id
+          let targetKey: string | undefined
+          if (sourceAgent && docParallelId) {
+            // Parallel: find the exact card by agent name + parallel_call_id
+            targetKey = `${sourceAgent}::${docParallelId}`
+          } else if (sourceAgent) {
+            // Sequential: find by agent name
+            targetKey = currentAgentKey.get(sourceAgent) || sourceAgent
+          }
+          // Fallback to last running/completed agent
+          if (!targetKey || !agentMap.has(targetKey)) {
+            targetKey = lastRunningAgentKey || lastCompletedAgentKey
+          }
           if (targetKey && agentMap.has(targetKey)) {
             const targetAgent = agentMap.get(targetKey)!
             if (!targetAgent.documentEvents.includes(content)) {

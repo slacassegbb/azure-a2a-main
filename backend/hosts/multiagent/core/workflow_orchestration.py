@@ -3543,6 +3543,19 @@ Analyze the plan and determine the next step."""
                                 plan=plan,
                                 workflow_goal=workflow_goal,
                             )
+                            # Emit completion/error immediately so the frontend
+                            # updates the spinner without waiting for all parallel tasks
+                            is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
+                            if not result.get("hitl_pause") and not result.get("error") and task.recommended_agent and not is_eval:
+                                await self._emit_granular_agent_event(
+                                    task.recommended_agent, f"{task.recommended_agent} completed", context_id,
+                                    event_type="agent_complete"
+                                )
+                            elif result.get("error") and task.recommended_agent and not is_eval:
+                                await self._emit_granular_agent_event(
+                                    task.recommended_agent, f"Error: {result['error'][:500]}", context_id,
+                                    event_type="agent_error", metadata={"error": result["error"][:500]}
+                                )
                             return result
                         except Exception as e:
                             # IMPORTANT: Check if HITL was triggered before the error
@@ -3552,7 +3565,7 @@ Analyze the plan and determine the next step."""
                                 task.state = "input_required"
                                 task.updated_at = datetime.now(timezone.utc)
                                 return {"output": str(e), "hitl_pause": True, "task_id": task.task_id}
-                            
+
                             task.state = "failed"
                             task.error_message = str(e)
                             task.updated_at = datetime.now(timezone.utc)
@@ -3569,24 +3582,24 @@ Analyze the plan and determine the next step."""
                         log_error(f"[Agent Mode] asyncio.gather failed: {gather_error}")
                         raise
                     
-                    # Process results — emit completion/error events with correct parallel_call_id
-                    # so the frontend can match each event to the right agent card.
+                    # Process results — agent_complete/agent_error already emitted inside
+                    # each parallel coroutine for immediate UI feedback. Here we just
+                    # collect outputs, handle exceptions, and detect HITL pauses.
                     hitl_pause = False
                     for i, result in enumerate(results):
                         task = pydantic_tasks[i]
                         is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
 
-                        # Set parallel_call_id FIRST so ALL events in this iteration
-                        # route to the correct frontend card (we're outside the
-                        # parallel coroutine context, so the contextvar is unset).
+                        # Set parallel_call_id so any remaining events route correctly
                         _current_parallel_call_id.set(task.task_id)
 
                         if isinstance(result, Exception):
                             task.state = "failed"
                             task.error_message = str(result)
+                            # Emit error for unhandled exceptions (coroutine didn't get to emit)
                             if task.recommended_agent and not is_eval:
                                 await self._emit_granular_agent_event(
-                                    task.recommended_agent, f"Error: {str(result)[:200]}", context_id,
+                                    task.recommended_agent, f"Error: {str(result)[:500]}", context_id,
                                     event_type="agent_error", metadata={"error": str(result)[:500]}
                                 )
                         elif isinstance(result, dict):
@@ -3595,21 +3608,10 @@ Analyze the plan and determine the next step."""
                                 if result.get("output"):
                                     all_task_outputs.append(result["output"])
                             elif result.get("error"):
-                                if task.recommended_agent and not is_eval:
-                                    await self._emit_granular_agent_event(
-                                        task.recommended_agent, f"Error: {result['error'][:200]}", context_id,
-                                        event_type="agent_error", metadata={"error": result["error"][:500]}
-                                    )
+                                pass  # Already emitted inside coroutine
                             else:
                                 if result.get("output"):
                                     all_task_outputs.append(result["output"])
-                                # Emit agent_complete only for non-error, non-eval tasks.
-                                # Eval/Query/WebSearch emit their own events inside their handlers.
-                                if task.recommended_agent and not is_eval and not result.get("hitl_pause"):
-                                    await self._emit_granular_agent_event(
-                                        task.recommended_agent, f"{task.recommended_agent} completed", context_id,
-                                        event_type="agent_complete"
-                                    )
 
                         _current_parallel_call_id.set(None)
                         task.updated_at = datetime.now(timezone.utc)
@@ -3697,7 +3699,7 @@ Analyze the plan and determine the next step."""
                             )
                         elif task.state == "failed" and task.recommended_agent and not is_evaluate:
                             await self._emit_granular_agent_event(
-                                task.recommended_agent, f"Error: {task.error_message or 'Unknown error'}"[:200], context_id,
+                                task.recommended_agent, f"Error: {(task.error_message or 'Unknown error')[:500]}", context_id,
                                 event_type="agent_error", metadata={"error": (task.error_message or "Unknown error")[:500]}
                             )
                         
@@ -3720,7 +3722,7 @@ Analyze the plan and determine the next step."""
                         # Emit agent_error so frontend shows failure
                         if task.recommended_agent:
                             await self._emit_granular_agent_event(
-                                task.recommended_agent, f"Error: {str(e)[:200]}", context_id,
+                                task.recommended_agent, f"Error: {str(e)[:500]}", context_id,
                                 event_type="agent_error", metadata={"error": str(e)[:500]}
                             )
                     
