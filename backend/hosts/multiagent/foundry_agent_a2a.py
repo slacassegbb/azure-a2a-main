@@ -5147,6 +5147,39 @@ WORKFLOW STEPS AND OUTPUTS:
                     else:
                         combined_response = "Workflow completed successfully."
                     
+                    # POST-PROCESS: Restore SAS tokens on blob URLs.
+                    # The synthesis LLM strips query parameters from blob URLs, making
+                    # them inaccessible when the storage account has public access disabled.
+                    # Build a mapping of base_url → full_sas_url from stored FileParts,
+                    # then replace any bare blob URLs in the response.
+                    _sas_url_map = {}  # base_url (no query) → full_url (with SAS)
+                    for _src in [
+                        getattr(session_context, '_latest_processed_parts', []),
+                        getattr(session_context, '_agent_generated_artifacts', []),
+                    ]:
+                        for _part in _src:
+                            _target = getattr(_part, 'root', _part)
+                            _file_obj = getattr(_target, 'file', None)
+                            if _file_obj:
+                                _full_uri = str(getattr(_file_obj, 'uri', '') or '')
+                                if '?' in _full_uri and _full_uri.startswith('https://'):
+                                    _base = _full_uri.split('?')[0]
+                                    _sas_url_map[_base] = _full_uri
+                    if _sas_url_map:
+                        import re as _sas_re
+                        def _restore_sas(match):
+                            url = match.group(0)
+                            # Strip any trailing markdown punctuation
+                            base = url.split('?')[0]
+                            return _sas_url_map.get(base, url)
+                        # Match blob URLs that may or may not already have query params
+                        combined_response = _sas_re.sub(
+                            r'https://[a-zA-Z0-9]+\.blob\.core\.windows\.net/[^\s\)\"\'>\]]+',
+                            _restore_sas,
+                            combined_response
+                        )
+                        log_debug(f"[Synthesis] Restored SAS tokens on {len(_sas_url_map)} blob URLs")
+
                     # Return as single response (not a list)
                     final_responses = [combined_response]
 
