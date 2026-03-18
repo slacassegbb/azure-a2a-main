@@ -97,9 +97,6 @@ class AgentModeTask(BaseModel):
     # LLM-generated summary of the output (~200 chars) for tiered context compaction.
     # Full output stays in `output`; downstream steps use the summary for older tasks.
     summary: Optional[str] = Field(None, description="Compact LLM-generated summary of task output for context compaction.")
-    # Extracted key identifiers (exact values: codes, names, amounts, dates) that survive compaction.
-    # Paired with summary to implement dual-memory: summary = episodic (lossy), identifiers = working (lossless).
-    key_identifiers: Optional[str] = Field(None, description="Extracted key identifiers from task output (names, codes, amounts, dates). Preserved verbatim through context compaction.")
     # Structured prompt metadata from planner (carried from PlannerTask)
     planner_metadata: Optional[PlannerTask] = Field(None, description="Original planner task with structured prompt fields.")
 
