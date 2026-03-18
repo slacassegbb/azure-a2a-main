@@ -927,18 +927,20 @@ Analyze the context and return your structured result."""
         agent_name: str,
         task_description: str,
         context_id: str,
-    ) -> Optional[str]:
-        """Generate a compact LLM summary (~200 chars) of a task output using gpt-4o-mini.
+    ) -> tuple:
+        """Generate a dual-memory summary of a task output using gpt-4o-mini.
 
-        Used for tiered context compaction: older task outputs are replaced with
-        these summaries so the planner and downstream agents get the gist without
-        blowing up the context window.
+        Implements the OpenDev paper's dual-memory architecture:
+        - Episodic memory (narrative summary): compressed gist of what happened (~150 chars)
+        - Working memory (key identifiers): exact values extracted verbatim (codes, names, amounts)
 
-        Returns None on failure (caller should fall back to truncation).
+        Returns a tuple: (narrative_summary, key_identifiers).
+        key_identifiers is None if no specific identifiers were found.
+        Falls back to (truncated_text, None) on failure.
         """
         if not output_text or len(output_text) < 100:
             # Too short to bother summarizing — use as-is
-            return output_text[:250] if output_text else None
+            return (output_text[:250] if output_text else None, None)
 
         try:
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -967,10 +969,17 @@ Analyze the context and return your structured result."""
                     {
                         "role": "system",
                         "content": (
-                            "You are a concise summarizer for a multi-agent workflow orchestrator. "
-                            "Summarize the agent's output in 1-3 sentences (max 200 characters). "
-                            "Focus on: what action was taken, what was produced, and key data points. "
-                            "If files or documents were created, mention them. Be factual, not verbose."
+                            "You are a concise summarizer for a multi-agent workflow orchestrator.\n\n"
+                            "Produce TWO sections:\n\n"
+                            "IDENTIFIERS (copy-paste exactly from the source, never paraphrase):\n"
+                            "List every specific identifier, code, name, number, amount, date, email address, "
+                            "file name, or reference found in the output. Use the exact characters from the "
+                            "source text. If none exist, write \"None\".\n\n"
+                            "SUMMARY (1-2 sentences, max 150 characters):\n"
+                            "What action was taken and what was the result.\n\n"
+                            "Example:\n"
+                            "IDENTIFIERS: SKU FP-BOND-006, qty 3200, price $12.75/ream, manufacturer Hammermill, lead time 2 days\n"
+                            "SUMMARY: Looked up bond paper in supplier database; in stock with 2-day lead time."
                         ),
                     },
                     {
@@ -983,23 +992,47 @@ Analyze the context and return your structured result."""
                     },
                 ],
                 temperature=0.0,
-                max_tokens=100,
+                max_tokens=200,
             )
 
-            summary = completion.choices[0].message.content.strip()
-            log_info(f"[Context Compaction] Summary for '{agent_name}': {summary[:100]}...")
+            raw_response = completion.choices[0].message.content.strip()
+
+            # Parse dual-memory response into identifiers + narrative
+            identifiers = None
+            narrative = raw_response
+            if "IDENTIFIERS" in raw_response and "SUMMARY" in raw_response:
+                parts = raw_response.split("SUMMARY")
+                id_section = parts[0]
+                # Strip the label and formatting
+                for prefix in ["IDENTIFIERS:", "IDENTIFIERS", "**IDENTIFIERS**:", "**IDENTIFIERS**"]:
+                    id_section = id_section.replace(prefix, "")
+                id_section = id_section.strip().strip("*:").strip()
+                # Extract narrative
+                narrative_section = parts[1] if len(parts) > 1 else raw_response
+                for prefix in [":", "**:", "**"]:
+                    if narrative_section.startswith(prefix):
+                        narrative_section = narrative_section[len(prefix):]
+                narrative = narrative_section.strip().strip("*:").strip()
+                # Only keep identifiers if meaningful
+                if id_section.lower() not in ("none", "none.", "n/a", "") and len(id_section) > 2:
+                    identifiers = id_section
+
+            log_info(f"[Context Compaction] Summary for '{agent_name}': {narrative[:100]}...")
+            if identifiers:
+                log_info(f"[Context Compaction] Identifiers for '{agent_name}': {identifiers[:150]}...")
 
             # Track summarizer token usage
             if hasattr(completion, "usage") and completion.usage:
                 self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
                 self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
 
-            return summary
+            return (narrative, identifiers)
 
         except Exception as e:
             log_warning(f"[Context Compaction] Summarization failed for '{agent_name}': {e}")
-            # Fallback: simple truncation
-            return output_text[:250] + "..." if len(output_text) > 250 else output_text
+            # Fallback: simple truncation, no identifiers
+            fallback = output_text[:250] + "..." if len(output_text) > 250 else output_text
+            return (fallback, None)
 
     async def _reflect_on_task_results(
         self,
@@ -1425,6 +1458,21 @@ Analyze the context and return your structured result."""
                         if truncated and len(truncated) >= 20:
                             context_parts.append(f"### Step Output {output_index + 1} (truncated):\n{truncated}")
                             total_chars += len(truncated)
+
+        # Append key identifiers from ALL completed tasks (dual-memory working memory).
+        # These survive compaction and ensure exact values are never lost between steps.
+        if plan and plan.tasks:
+            _id_lines = []
+            for t in plan.tasks:
+                if t.state == "completed" and t.key_identifiers:
+                    _sm = _re.search(r'\[Step\s+(\d+[a-z]?)\]', t.task_description)
+                    _label = _sm.group(1) if _sm else "?"
+                    _id_lines.append(f"- Step {_label} ({t.recommended_agent}): {t.key_identifiers}")
+            if _id_lines:
+                context_parts.append(
+                    "### Key Identifiers from Previous Steps (use exact values, do not paraphrase):\n"
+                    + "\n".join(_id_lines)
+                )
 
         if not context_parts:
             return None
@@ -2979,9 +3027,14 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                         slim = {"result": result_val}
                     if "evaluation" in output:
                         slim["evaluation"] = output["evaluation"]
+                    # Preserve key identifiers in compact output (dual-memory: lossless working memory)
+                    ki = task_entry.get("key_identifiers")
+                    if ki:
+                        slim["key_identifiers"] = ki
                     task_entry["output"] = slim
                 # Strip fields that bloat the prompt without helping the planner
                 task_entry.pop("summary", None)
+                task_entry.pop("key_identifiers", None)  # Moved into output.key_identifiers above
                 task_entry.pop("planner_metadata", None)  # Duplicates task_description + adds output_guidance bloat
                 task_entry.pop("created_at", None)
                 task_entry.pop("updated_at", None)
@@ -3070,6 +3123,23 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     f"- Key Data: {_last_reflection.key_data_extracted or 'None'}"
                 )
 
+            # Build cumulative Identifier Registry from completed tasks (dual-memory working memory)
+            _id_entries = []
+            for _te in compact_plan.get("tasks", []):
+                _te_output = _te.get("output", {})
+                _te_ki = _te_output.get("key_identifiers") if isinstance(_te_output, dict) else None
+                if _te_ki:
+                    import re as _re_id
+                    _step_m = _re_id.search(r'\[Step\s+(\d+[a-z]?)\]', _te.get("task_description", ""))
+                    _label = _step_m.group(1) if _step_m else "?"
+                    _id_entries.append(f"  Step {_label}: {_te_ki}")
+            _identifier_registry = ""
+            if _id_entries:
+                _identifier_registry = (
+                    "\n\nIdentifier Registry (EXACT values from completed steps — reference these verbatim in task descriptions):\n"
+                    + "\n".join(_id_entries)
+                )
+
             user_prompt = f"""Goal:
 {plan.goal}{conversation_context}{auto_reply_note}{goal_reminder}
 
@@ -3077,7 +3147,7 @@ Current Plan (JSON):
 {json.dumps(compact_plan, indent=2, default=str)}
 
 Available Agents (JSON):
-{json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}{_critique_context}
+{json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}{_identifier_registry}{_critique_context}
 
 Analyze the plan and determine the next step."""
             
@@ -3620,12 +3690,16 @@ Analyze the plan and determine the next step."""
                     for task in pydantic_tasks:
                         if task.state == "completed" and task.output and not task.summary:
                             output_text = task.output.get("result", "") or str(task.output)
-                            task.summary = await self._summarize_task_output(
+                            summary_result = await self._summarize_task_output(
                                 output_text=output_text,
                                 agent_name=task.recommended_agent or "Agent",
                                 task_description=task.task_description,
                                 context_id=context_id,
                             )
+                            if isinstance(summary_result, tuple):
+                                task.summary, task.key_identifiers = summary_result
+                            else:
+                                task.summary = summary_result
 
                     # If any task triggered HITL pause, save plan and return
                     if hitl_pause:
@@ -3682,12 +3756,16 @@ Analyze the plan and determine the next step."""
                         # ── Context Compaction: summarize completed sequential task output ──
                         if task.state == "completed" and task.output and not task.summary:
                             output_text = task.output.get("result", "") or str(task.output)
-                            task.summary = await self._summarize_task_output(
+                            summary_result = await self._summarize_task_output(
                                 output_text=output_text,
                                 agent_name=task.recommended_agent or "Agent",
                                 task_description=task.task_description,
                                 context_id=context_id,
                             )
+                            if isinstance(summary_result, tuple):
+                                task.summary, task.key_identifiers = summary_result
+                            else:
+                                task.summary = summary_result
 
                         # Emit agent_complete/agent_error based on task state from the plan
                         # Skip EVALUATE/QUERY tasks — they emit their own events
