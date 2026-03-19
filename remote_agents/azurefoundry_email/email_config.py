@@ -384,19 +384,24 @@ def get_emails(
         # Build the Graph API URL with filters
         user_email = credentials["sender_email"]
         count = min(count, 200)  # Cap at 200 (Graph API supports up to 999)
-        
+
+        # When filtering by subject client-side, fetch more candidates so we
+        # don't miss the target email just because a newer unread arrived first.
+        fetch_count = max(count * 10, 25) if subject_contains else count
+        fetch_count = min(fetch_count, 200)
+
         # Build filter query
         filters = []
         if unread_only:
             filters.append("isRead eq false")
         if since_date:
             filters.append(f"receivedDateTime ge {since_date}T00:00:00Z")
-        
+
         # Construct URL - use /messages directly for broader compatibility
         # The /mailFolders/inbox/messages path can have issues with some mailbox configurations
         url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages"
         params = {
-            "$top": count,
+            "$top": fetch_count,
             "$orderby": "receivedDateTime desc",
             "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview,body,hasAttachments,toRecipients,ccRecipients,parentFolderId"
         }
