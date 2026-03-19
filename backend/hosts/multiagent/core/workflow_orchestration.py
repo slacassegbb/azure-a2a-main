@@ -367,7 +367,8 @@ class WorkflowOrchestration:
         task: AgentModeTask,
         session_context: SessionContext,
         context_id: str,
-        previous_task_outputs: Optional[List[str]] = None
+        previous_task_outputs: Optional[List[str]] = None,
+        plan: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Execute an evaluation step using the host orchestrator LLM.
@@ -433,14 +434,14 @@ class WorkflowOrchestration:
             except Exception as e:
                 log_error(f"[EVALUATE] Error searching memory for document content: {e}")
 
-        # Add previous task outputs
-        if previous_task_outputs:
-            for output in previous_task_outputs[-3:]:
-                context_parts.append(output)
+        # Add previous task outputs via central pressure-aware context builder
+        outputs_context = self._build_outputs_context(
+            previous_task_outputs or [], plan=plan, max_chars=20000
+        )
+        if outputs_context:
+            context_parts.append(outputs_context)
 
         context_text = "\n\n".join(context_parts)
-        if len(context_text) > 6000:
-            context_text = context_text[:6000] + "... [truncated]"
 
         system_prompt = """You are evaluating a condition as part of a multi-agent workflow.
 Based on the context from previous workflow steps, determine whether the condition is TRUE or FALSE.
@@ -514,7 +515,8 @@ Evaluate the condition and return your result."""
         hitl_task_description: str,
         session_context: SessionContext,
         context_id: str,
-        previous_task_outputs: Optional[List[str]] = None
+        previous_task_outputs: Optional[List[str]] = None,
+        plan: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Universal HITL gate: evaluate whether a workflow should continue or stop
@@ -535,15 +537,10 @@ Evaluate the condition and return your result."""
             event_type="agent_start", metadata={"hitl_gate": True, "task_description": hitl_task_description[:200]}
         )
 
-        # Build context from previous task outputs (last 3)
-        context_parts = []
-        if previous_task_outputs:
-            for output in previous_task_outputs[-3:]:
-                context_parts.append(output)
-
-        context_text = "\n\n".join(context_parts)
-        if len(context_text) > 4000:
-            context_text = context_text[:4000] + "... [truncated]"
+        # Build context from previous task outputs via central pressure-aware builder
+        context_text = self._build_outputs_context(
+            previous_task_outputs or [], plan=plan, max_chars=20000
+        )
 
         system_prompt = """You are evaluating a human's response to a workflow step that required human input.
 Based on the step's original purpose and the human's response, determine whether the workflow should CONTINUE or STOP.
@@ -623,7 +620,8 @@ Based on the step's purpose and the human's response, should this workflow conti
         task: AgentModeTask,
         session_context: SessionContext,
         context_id: str,
-        previous_task_outputs: Optional[List[str]] = None
+        previous_task_outputs: Optional[List[str]] = None,
+        plan: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Execute a query step using the host orchestrator LLM.
@@ -685,19 +683,20 @@ Based on the step's purpose and the human's response, should this workflow conti
             except Exception as e:
                 log_error(f"[QUERY] Error searching memory for document content: {e}")
 
-        # Add previous task outputs (more generous than EVALUATE since queries need more context)
+        # Add previous task outputs via central pressure-aware context builder
         if previous_task_outputs:
             log_info(f"[QUERY] Received {len(previous_task_outputs)} previous outputs")
-            for i, output in enumerate(previous_task_outputs[-5:]):
-                log_info(f"[QUERY] Output {i}: {len(output)} chars, preview: {output[:100]}...")
-                context_parts.append(output)
         else:
             log_warning(f"[QUERY] No previous_task_outputs received!")
 
+        outputs_context = self._build_outputs_context(
+            previous_task_outputs or [], plan=plan, max_chars=30000
+        )
+        if outputs_context:
+            context_parts.append(outputs_context)
+
         context_text = "\n\n".join(context_parts)
-        log_info(f"[QUERY] Total context: {len(context_text)} chars, parts: {len(context_parts)}")
-        if len(context_text) > 8000:
-            context_text = context_text[:8000] + "... [truncated]"
+        log_info(f"[QUERY] Total context: {len(context_text)} chars")
 
         system_prompt = """You are analyzing data as part of a multi-agent workflow.
 Based on the context from previous workflow steps, answer the query with structured results.
@@ -785,7 +784,8 @@ Analyze the context and return your structured result."""
         task: AgentModeTask,
         session_context: SessionContext,
         context_id: str,
-        previous_task_outputs: Optional[List[str]] = None
+        previous_task_outputs: Optional[List[str]] = None,
+        plan: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Execute a web search step using an isolated Responses API call with BingGroundingAgentTool.
@@ -805,14 +805,10 @@ Analyze the context and return your structured result."""
             event_type="agent_start", metadata={"web_search": True, "task_description": task_desc}
         )
 
-        # Build context from previous step outputs (last 3 for relevance)
-        context_parts = []
-        if previous_task_outputs:
-            for output in previous_task_outputs[-3:]:
-                context_parts.append(output)
-        context_text = "\n\n".join(context_parts)
-        if len(context_text) > 4000:
-            context_text = context_text[:4000] + "... [truncated]"
+        # Build context from previous step outputs via central pressure-aware builder
+        context_text = self._build_outputs_context(
+            previous_task_outputs or [], plan=plan, max_chars=20000
+        )
 
         try:
             # Ensure Azure client is ready
@@ -1032,6 +1028,82 @@ Analyze the context and return your structured result."""
         pressure = total_tokens / _CONTEXT_WINDOW
         log_info(f"[Context Compaction] Pressure: {pressure:.2f} ({total_tokens} est. tokens)")
         return pressure
+
+    def _build_outputs_context(
+        self,
+        previous_task_outputs: List[str],
+        plan=None,
+        max_chars: int = 50000,
+    ) -> str:
+        """Central pressure-aware context builder used by ALL orchestrator paths.
+
+        Single source of truth for how previous step outputs are injected into
+        any prompt — remote agents, EVALUATE, HITL, QUERY, WEB_SEARCH alike.
+
+        Tiers (aligned with adaptive compaction paper):
+          < 0.30 (low):    all outputs verbatim — no compaction
+          0.30–0.70 (med): last 2 full, older use plan summaries or 500-char truncation
+          > 0.70 (high):   last 2 full, all older aggressively compressed (300 chars)
+        """
+        import re as _re
+        if not previous_task_outputs:
+            return ""
+
+        _url_pattern = _re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', _re.MULTILINE)
+        _path_pattern = _re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
+
+        num_outputs = len(previous_task_outputs)
+        output_chars = sum(len(o) for o in previous_task_outputs if o)
+        plan_chars = len(plan.model_dump_json()) if plan else 0
+        est_tokens = (output_chars + plan_chars) // 4 + 3000
+        pressure = est_tokens / 128000
+
+        # Low pressure: include everything; otherwise apply recent window
+        recent_threshold = 2 if pressure >= 0.30 else num_outputs
+        log_info(f"[Context] Pressure: {pressure:.2f}, recent_threshold: {recent_threshold}/{num_outputs}")
+
+        # Build summary lookup from plan if available
+        task_summaries: dict = {}
+        if plan and plan.tasks:
+            for ti, t in enumerate(plan.tasks):
+                if t.state == "completed" and t.summary:
+                    task_summaries[ti] = t.summary
+
+        parts: list = []
+        total_chars = 0
+        for idx, output in enumerate(reversed(previous_task_outputs)):
+            if not output or len(output) < 20:
+                continue
+
+            output_index = num_outputs - 1 - idx
+            is_recent = idx < recent_threshold
+
+            cleaned = _url_pattern.sub('', output)
+            cleaned = _path_pattern.sub('[file]', cleaned).strip()
+            if len(cleaned) < 20:
+                continue
+
+            if is_recent:
+                text = cleaned
+            elif pressure > 0.70:
+                # High pressure: hard cap at 300 chars
+                text = (cleaned[:300] + "... [truncated]") if len(cleaned) > 300 else cleaned
+            else:
+                # Medium pressure: use plan summary if available, else 500-char truncation
+                summary = task_summaries.get(output_index)
+                text = summary if summary else ((cleaned[:500] + "... [truncated]") if len(cleaned) > 500 else cleaned)
+
+            if total_chars + len(text) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 200:
+                    parts.append(f"### Step {output_index + 1}:\n{text[:remaining]}")
+                break
+
+            parts.append(f"### Step {output_index + 1}:\n{text}")
+            total_chars += len(text)
+
+        parts.reverse()
+        return "\n\n".join(parts)
 
     async def _reflect_on_task_results(
         self,
@@ -1411,63 +1483,13 @@ Analyze the context and return your structured result."""
                 context_parts.append(f"### Output from Step {label}:\n{cleaned}")
                 total_chars += len(cleaned)
         elif previous_task_outputs:
-            # ADAPTIVE TIERED CONTEXT: apply compaction only under context pressure.
-            # Low pressure (<0.30): include ALL outputs verbatim (up to max_context_chars).
-            # Medium pressure (0.30-0.70): last 2 full, older use LLM summaries.
-            # High pressure (>0.70): last 2 full, older aggressively compressed.
-            num_outputs = len(previous_task_outputs)
-
-            # Measure pressure using the same method as the summarization trigger
-            _output_chars = sum(len(o) for o in previous_task_outputs if o)
-            _plan_chars = len(plan.model_dump_json()) if plan else 0
-            _est_tokens = (_output_chars + _plan_chars) // 4 + 3000
-            _pressure = _est_tokens / 128000
-
-            # Under low pressure, pass everything in full — no tiering needed
-            recent_threshold = 2 if _pressure >= 0.30 else num_outputs
-            log_info(f"[Context Builder] Pressure: {_pressure:.2f}, recent_threshold: {recent_threshold}/{num_outputs}")
-
-            # Build a summary lookup from the plan's completed tasks
-            task_summaries = {}
-            if plan and plan.tasks:
-                for ti, t in enumerate(plan.tasks):
-                    if t.state == "completed" and t.summary:
-                        task_summaries[ti] = t.summary
-
-            for idx, output in enumerate(reversed(previous_task_outputs)):
-                if not output or len(output) < 20:
-                    continue
-
-                output_index = num_outputs - 1 - idx  # Original index in all_task_outputs
-                is_recent = idx < recent_threshold
-
-                if is_recent:
-                    # Full output for recent steps
-                    cleaned = _url_pattern.sub('', output)
-                    cleaned = _path_pattern.sub('[file]', cleaned).strip()
-                    if len(cleaned) < 20:
-                        continue
-                    if total_chars + len(cleaned) > max_context_chars:
-                        remaining = max_context_chars - total_chars
-                        if remaining > 200:
-                            context_parts.append(f"### Step Output {output_index + 1} (full):\n{cleaned[:remaining]}")
-                        break
-                    context_parts.append(f"### Step Output {output_index + 1} (full):\n{cleaned}")
-                    total_chars += len(cleaned)
-                else:
-                    # Older steps: use LLM summary if available, else truncate
-                    summary = task_summaries.get(output_index)
-                    if summary:
-                        context_parts.append(f"### Step Output {output_index + 1} (summary):\n{summary}")
-                        total_chars += len(summary)
-                    else:
-                        # No summary available — truncate
-                        cleaned = _url_pattern.sub('', output)
-                        cleaned = _path_pattern.sub('[file]', cleaned).strip()
-                        truncated = cleaned[:300] + "... [truncated]" if len(cleaned) > 300 else cleaned
-                        if truncated and len(truncated) >= 20:
-                            context_parts.append(f"### Step Output {output_index + 1} (truncated):\n{truncated}")
-                            total_chars += len(truncated)
+            # Delegate to the central pressure-aware context builder
+            outputs_section = self._build_outputs_context(
+                previous_task_outputs, plan=plan, max_chars=max_context_chars
+            )
+            if outputs_section:
+                context_parts.append(outputs_section)
+                total_chars += len(outputs_section)
 
         if not context_parts:
             return None
@@ -1516,19 +1538,19 @@ Analyze the context and return your structured result."""
         # Detect evaluation steps — handled by host LLM, not a remote agent
         if recommended_agent and recommended_agent.upper() == "EVALUATE":
             return await self._execute_evaluation_step(
-                task, session_context, context_id, previous_task_outputs
+                task, session_context, context_id, previous_task_outputs, plan=plan
             )
 
         # Detect query steps — handled by host LLM, not a remote agent
         if recommended_agent and recommended_agent.upper() == "QUERY":
             return await self._execute_query_step(
-                task, session_context, context_id, previous_task_outputs
+                task, session_context, context_id, previous_task_outputs, plan=plan
             )
 
         # Detect web search steps — handled by host with BingGroundingAgentTool
         if recommended_agent and recommended_agent.upper() == "WEB_SEARCH":
             return await self._execute_web_search_step(
-                task, session_context, context_id, previous_task_outputs
+                task, session_context, context_id, previous_task_outputs, plan=plan
             )
 
         # Stream task creation event (agent_start already emitted from orchestration loop)
@@ -2548,7 +2570,8 @@ Analyze this request and decide the best approach."""
                     hitl_task_description=hitl_task_desc,
                     session_context=session_context,
                     context_id=context_id,
-                    previous_task_outputs=all_task_outputs
+                    previous_task_outputs=all_task_outputs,
+                    plan=plan,
                 )
 
                 if not gate_result.get("should_continue", True):
