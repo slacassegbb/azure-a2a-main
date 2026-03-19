@@ -1018,7 +1018,7 @@ Analyze the context and return your structured result."""
           0.30–0.70 → medium: summarize steps older than the recent window
           > 0.70  → high:   summarize everything, including recent steps
         """
-        _CONTEXT_WINDOW = 128000  # gpt-4o
+        _CONTEXT_WINDOW = int(os.environ.get("ORCHESTRATOR_CONTEXT_WINDOW", "128000"))
         _CHARS_PER_TOKEN = 4
         _OVERHEAD_TOKENS = 3000   # system prompt + user message + planner prompt
 
