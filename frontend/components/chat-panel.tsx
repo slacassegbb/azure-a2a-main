@@ -3780,7 +3780,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                       src={attachment.uri}
                                       alt={attachment.fileName || "Image attachment"}
                                       className="w-full h-auto block rounded-lg"
-                                      style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
+                                      style={{ maxHeight: '500px', objectFit: 'contain' }}
                                     />
                                   </a>
                                   {/* Overlay buttons for refine and mask - top right corner */}
@@ -3939,7 +3939,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                       src={image.uri}
                                       alt={image.fileName || "Generated image"}
                                       className="w-full h-auto block rounded-lg"
-                                      style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
+                                      style={{ maxHeight: '500px', objectFit: 'contain' }}
                                     />
                                   </a>
                                 )}

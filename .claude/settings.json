@@ -7,7 +7,33 @@
       "Bash(# Test a direct agent health check \\(the shared agent-registry.ts function\\) curl -s http://localhost:9043/.well-known/agent.json)",
       "Read(//private/tmp/**)",
       "Bash(docker build --platform linux/amd64 -t a2awestuslab.azurecr.io/backend:latest -f backend/Dockerfile .)",
-      "Bash(az containerapp secret list --name backend-uami --resource-group rg-a2a-prod -o table)"
+      "Bash(az containerapp secret list --name backend-uami --resource-group rg-a2a-prod -o table)",
+      "Bash(# Find the backend process lsof -iTCP -sTCP:LISTEN -P)",
+      "Bash(lsof -iTCP -sTCP:LISTEN -P)",
+      "Bash(lsof -i -P -n)",
+      "Read(//Users/simonlacasse/Downloads/sl-a2a-main2/**)",
+      "Bash(sort -t: -k2 -n)",
+      "Bash(lsof -i :12000)",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(az acr login --name a2awestuslab)",
+      "Bash(docker build --platform linux/amd64 -t a2awestuslab.azurecr.io/websocket:latest -f backend/Dockerfile.websocket backend)",
+      "Bash(docker build --platform linux/amd64 -t a2awestuslab.azurecr.io/frontend:latest -f frontend/Dockerfile --build-arg NEXT_PUBLIC_A2A_API_URL=\"https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io\" --build-arg NEXT_PUBLIC_WEBSOCKET_URL=\"wss://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io/events\" --build-arg NEXT_PUBLIC_DEV_MODE=\"false\" frontend/)",
+      "Bash(docker push a2awestuslab.azurecr.io/backend:latest)",
+      "Bash(docker push a2awestuslab.azurecr.io/websocket:latest)",
+      "Bash(brew install poppler)",
+      "Bash(pdftoppm -v)",
+      "Bash(pdftotext \"/Users/simonlacasse/.claude/projects/-Users-simonlacasse-Downloads-sl-a2a-main2/7ddbb67e-fd87-45f7-8d1f-a9f027ee6ec5/tool-results/webfetch-1773413750347-oqzlx5.pdf\" -)",
+      "Bash(git push private feature/structured-agent-prompts)",
+      "Bash(git status -u)",
+      "Bash(sed -i '' 's/| 9045 | Video & Audio Editing | No |/| 9045 | Video \\\\& Audio Editing | No |\\\\n| 9050 | Home Gardening | No |/' .claude/skills/a2a-agent-creator/references/port-allocation.md)",
+      "Bash(sed -i '' 's/9046-9065/9046-9049, 9051-9065/' .claude/skills/a2a-agent-creator/references/port-allocation.md)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python3 -c \":*)",
+      "Bash(pkill -f \"python __main__.py --host 0.0.0.0 --port 9050\")",
+      "Bash(docker info:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/simonlacasse/Downloads/sl-a2a-main2/.claude/skills/a2a-agent-creator/assets/utils"
     ]
   }
 }

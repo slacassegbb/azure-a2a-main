@@ -35,6 +35,7 @@ interface AgentInfo {
   progressMessages: string[]
   extractedFiles: { name: string; url?: string; type?: string }[]
   documentEvents: string[]  // Document extraction/indexing messages grouped under this card
+  documentFileCount: number  // Actual number of documents processed (from metadata)
   stepNumber?: string  // Extracted from [Step X] in content, e.g. "2", "2a", "2b"
   mapKey: string       // Unique key for React rendering (handles parallel same-agent cards)
   retryCount: number   // How many times this step was retried (0 = no retries)
@@ -90,6 +91,18 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
   // Track the currently running agent — used for document events that fire
   // before agent_complete (e.g., file extraction during SSE streaming)
   let lastRunningAgentKey: string | undefined
+
+  // Helper: get the best key for placing a connector after all current agents.
+  // If any agents are still running, use lastCompletedAgentKey (sequential).
+  // If all agents are done (parallel batch finished), use the last agent in render order.
+  const getConnectorPlacementKey = () => {
+    const hasRunning = Array.from(agentMap.values()).some(a => a.status === "running")
+    if (!hasRunning && agentMap.size > 0) {
+      // All agents done — place after last rendered card
+      return Array.from(agentMap.keys()).pop()
+    }
+    return lastCompletedAgentKey
+  }
   
   // Debug: log all incoming steps
   logDebug("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
@@ -120,7 +133,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         connectors.push({
           kind: "reasoning" as any,
           text: content,
-          afterAgentKey: lastCompletedAgentKey,
+          afterAgentKey: getConnectorPlacementKey(),
         })
         orchestratorStatus = "planning"
       } else if (eventType === "phase" || (eventType === "info" && phase)) {
@@ -176,6 +189,11 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
             if (!targetAgent.documentEvents.includes(content)) {
               targetAgent.documentEvents.push(content)
             }
+            // Track actual file count from metadata (emitted on document_indexing and document_extraction_complete)
+            const metaFileCount = step.metadata?.file_count ?? step.metadata?.files
+            if (typeof metaFileCount === "number" && metaFileCount > targetAgent.documentFileCount) {
+              targetAgent.documentFileCount = metaFileCount
+            }
           }
         } else if (phase === "reflection") {
           // Just a status spinner — don't surface as activity
@@ -190,7 +208,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           kind: "reflection",
           text: content,
           detail: step.metadata?.progress || undefined,
-          afterAgentKey: lastCompletedAgentKey,
+          afterAgentKey: getConnectorPlacementKey(),
         })
         orchestratorStatus = "reflecting"
       } else if (eventType === "critique" && content) {
@@ -199,7 +217,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           kind: "critique",
           text: content,
           detail: step.metadata?.suggested_fix || undefined,
-          afterAgentKey: lastCompletedAgentKey,
+          afterAgentKey: getConnectorPlacementKey(),
         })
         orchestratorStatus = "validating"
       } else if (eventType === "doom_loop" && content) {
@@ -208,7 +226,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           kind: "doom_loop",
           text: content,
           detail: step.metadata?.trigger || undefined,
-          afterAgentKey: lastCompletedAgentKey,
+          afterAgentKey: getConnectorPlacementKey(),
         })
         orchestratorStatus = "error"
       } else if (eventType === "tool_call") {
@@ -264,6 +282,8 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     if (parallelCallId) {
       // Parallel execution: each call has a unique ID from the backend
       mapKey = `${agentName}::${parallelCallId}`
+      // Track so sequential retries can find this card
+      currentAgentKey.set(agentName, mapKey)
     } else {
       // Sequential execution: track by completion state
       mapKey = currentAgentKey.get(agentName) || agentName
@@ -307,6 +327,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         progressMessages: [],
         extractedFiles: [],
         documentEvents: [],
+        documentFileCount: 0,
         stepNumber: stepMatch ? stepMatch[1] : undefined,
         mapKey,
         retryCount: 0,
@@ -494,9 +515,6 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
 function ConnectorGroup({ connectors: items }: { connectors: StepConnector[] }) {
   if (items.length === 0) return null
 
-  // Doom loops always show expanded (they're critical)
-  const hasDoomLoop = items.some(c => c.kind === "doom_loop")
-
   const getIcon = (kind: StepConnector["kind"]) => {
     switch (kind) {
       case "reflection": return <Eye className="h-3 w-3 text-violet-400/70 flex-shrink-0 mt-0.5" />
@@ -527,13 +545,6 @@ function ConnectorGroup({ connectors: items }: { connectors: StepConnector[] }) 
     }
   }
 
-  const summaryLabel = items.length === 1
-    ? (items[0].kind === "reasoning" ? "Orchestrator reasoning" :
-       items[0].kind === "reflection" ? "Orchestrator reflection" :
-       items[0].kind === "critique" ? "Orchestrator critique" :
-       items[0].kind === "doom_loop" ? "Loop detected" : "Orchestrator note")
-    : `${items.length} orchestrator notes`
-
   const renderItem = (c: StepConnector, i: number) => (
     <div key={i} className={`flex items-start gap-2 mx-3 my-1 px-3 py-2 rounded-md ${getStyle(c.kind)}`}>
       {getIcon(c.kind)}
@@ -544,24 +555,12 @@ function ConnectorGroup({ connectors: items }: { connectors: StepConnector[] }) 
     </div>
   )
 
-  // Doom loops render expanded (critical info)
-  if (hasDoomLoop) {
-    return <div className="my-1">{items.map(renderItem)}</div>
-  }
-
-  // Everything else is collapsible
-  return (
-    <details className="my-1 mx-3">
-      <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground/70 select-none py-1">
-        {summaryLabel}
-      </summary>
-      <div className="mt-0.5">{items.map(renderItem)}</div>
-    </details>
-  )
+  // Render all orchestrator notes expanded (visible by default)
+  return <div className="my-1">{items.map(renderItem)}</div>
 }
 
 function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber: number; isLive: boolean }) {
-  const { displayName, color, taskDescription, status, output, progressMessages, extractedFiles, documentEvents, retryCount, retriedError } = agent
+  const { displayName, color, taskDescription, status, output, progressMessages, extractedFiles, documentEvents, documentFileCount, retryCount, retriedError } = agent
   
   const isRunning = status === "running"
   const isComplete = status === "complete"
@@ -668,7 +667,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
               const isVideo = file.type?.startsWith('video/') || videoExtensions.includes(ext)
               const isAudio = file.type?.startsWith('audio/') || audioExtensions.includes(ext)
               const isMedia = isImage || isVideo || isAudio
-              const label = isMedia ? "Generated" : "Attachment"
+              const label = "Generated attachment"
               
               return (
                 <div key={i} className="space-y-1">
@@ -732,9 +731,14 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
         )}
 
         {cleanOutput && (
-          <div className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs border-l-2 max-h-[300px] overflow-y-auto" style={{ borderColor: color, backgroundColor: `${color}08` }}>
-            <div className="text-foreground/80 whitespace-pre-wrap">{cleanOutput}</div>
-          </div>
+          <details className="ml-6 mt-1.5">
+            <summary className="text-[10px] cursor-pointer hover:text-foreground/70 select-none" style={{ color }}>
+              View agent response
+            </summary>
+            <div className="mt-1 rounded-md px-3 py-2 text-xs border-l-2 max-h-[300px] overflow-y-auto" style={{ borderColor: color, backgroundColor: `${color}08` }}>
+              <div className="text-foreground/80 whitespace-pre-wrap">{cleanOutput}</div>
+            </div>
+          </details>
         )}
 
         {/* Collapsed retry error — show what failed before the successful retry */}
@@ -754,7 +758,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           <details className="ml-6 mt-1.5">
             <summary className="text-[10px] text-emerald-500 cursor-pointer hover:text-emerald-400 select-none flex items-center gap-1">
               <FileText className="h-3 w-3" />
-              {documentEvents.length} document{documentEvents.length !== 1 ? "s" : ""} processed
+              {(documentFileCount || 1)} document{(documentFileCount || 1) !== 1 ? "s" : ""} processed, added to memory and uploaded to file system
             </summary>
             <div className="mt-1 space-y-1">
               {documentEvents.map((evt, i) => (

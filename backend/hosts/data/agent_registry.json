@@ -3,7 +3,7 @@
     "name": "Stock Market Analysis Agent",
     "description": "Stock market data agent powered by Alpha Vantage. Access stock prices, forex, crypto, commodities, economic indicators, technical analysis, news sentiment, and company fundamentals.",
     "version": "1.0.0",
-    "url": "http://localhost:9040/",
+    "url": "https://azurefoundry-stockmarket.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -257,7 +257,7 @@
     "name": "Classification and Triage Agent",
     "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
     "version": "1.0.0",
-    "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:8001/",
     "defaultInputModes": [
       "text"
     ],
@@ -641,7 +641,7 @@
     "name": "Text Message Agent",
     "description": "A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Supports Human-in-the-Loop (HITL) for interactive SMS conversations. Send SMS messages, receive replies, and ask users questions that pause the workflow until they respond. Perfect for notifications, approvals, confirmations, and two-way SMS workflows.",
     "version": "1.1.0",
-    "url": "http://localhost:8016/",
+    "url": "https://azurefoundry-twilio2.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -1499,7 +1499,7 @@
     "name": "Legal Agent",
     "description": "An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
     "version": "1.0.0",
-    "url": "http://localhost:8006/",
+    "url": "https://azurefoundry-legal.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -1722,7 +1722,7 @@
     "name": "Music Generator Agent",
     "description": "An AI-powered music generation agent using the Suno API. Creates songs, lyrics, covers, mashups, separates vocals, generates MIDI, music videos, and more.",
     "version": "1.0.0",
-    "url": "http://localhost:9044/",
+    "url": "https://azurefoundry-music.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -1844,7 +1844,7 @@
     "name": "Video and Audio Editing Agent",
     "description": "An Azure AI Foundry agent that edits, converts, and transforms video and audio files using FFmpeg. Can trim, resize, merge, add subtitles, extract audio, change formats, and more. Accepts files via URL and returns processed files as downloadable artifacts.",
     "version": "1.0.0",
-    "url": "http://localhost:9045/",
+    "url": "https://azurefoundry-videoaudio.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -1859,12 +1859,7 @@
         "id": "edit_video",
         "name": "Edit Video",
         "description": "Edit and transform video files — trim, resize, change speed, add overlays, subtitles, transitions, and convert formats.",
-        "examples": [
-          "Trim this video from 0:30 to 2:00",
-          "Convert this video to 1080p MP4",
-          "Add subtitles to this video",
-          "Change the aspect ratio to 9:16 for mobile"
-        ],
+        "examples": null,
         "tags": [
           "video",
           "edit",
@@ -1877,11 +1872,7 @@
         "id": "edit_audio",
         "name": "Edit Audio",
         "description": "Edit and transform audio files — convert formats, adjust bitrate/sample rate, remove silence, extract audio from video.",
-        "examples": [
-          "Extract the audio from this video as MP3",
-          "Convert this WAV file to AAC",
-          "Remove silence from this audio recording"
-        ],
+        "examples": null,
         "tags": [
           "audio",
           "edit",
@@ -1894,16 +1885,196 @@
         "id": "convert_media",
         "name": "Convert Media",
         "description": "Convert video and audio files between formats with customizable quality settings (codec, bitrate, resolution, frame rate).",
-        "examples": [
-          "Convert this MKV to MP4 with H.264",
-          "Transcode this video to WebM for web",
-          "Convert this FLAC to MP3 at 320kbps"
-        ],
+        "examples": null,
         "tags": [
           "convert",
           "format",
           "codec",
           "transcode"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Home Gardening Agent",
+    "description": "An AI-powered home gardening assistant that monitors your garden via IoT camera, analyzes plant health with vision AI, and provides expert gardening advice.",
+    "version": "1.0.0",
+    "url": "http://localhost:9050/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "garden_analysis",
+        "name": "Garden Image Analysis",
+        "description": "Fetch the latest garden image from IoT camera, analyze plant health, growth, pests, and provide care recommendations.",
+        "examples": null,
+        "tags": [
+          "gardening",
+          "image-analysis",
+          "iot",
+          "plant-health",
+          "vision"
+        ]
+      },
+      {
+        "id": "gardening_advice",
+        "name": "Gardening Expert Advice",
+        "description": "Answer any gardening questions about planting, watering, composting, soil, pest control, and seasonal care.",
+        "examples": null,
+        "tags": [
+          "gardening",
+          "advice",
+          "plants",
+          "horticulture"
+        ]
+      },
+      {
+        "id": "garden_temporal_analysis",
+        "name": "Garden Temporal Analysis",
+        "description": "Compare garden images over time, track plant growth progression, and analyze changes using historical IoT camera photos.",
+        "examples": null,
+        "tags": [
+          "gardening",
+          "temporal-analysis",
+          "comparison",
+          "progression",
+          "iot",
+          "vision"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Supplier Agent",
+    "description": "An intelligent supplier agent that provides product catalog lookup, pricing, availability, lead times, and product recommendations from a PostgreSQL database.",
+    "version": "1.0.0",
+    "url": "http://localhost:9046/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "supplier_product_lookup",
+        "name": "Product Lookup",
+        "description": "Search and find products by name, SKU, category, or manufacturer in the supplier catalog.",
+        "examples": [
+          "Find all bond paper products",
+          "Look up SKU FP-BOND-2024-001",
+          "What corrugated boxes do you have?"
+        ],
+        "tags": [
+          "supplier",
+          "product",
+          "search",
+          "catalog",
+          "sku"
+        ]
+      },
+      {
+        "id": "supplier_pricing",
+        "name": "Pricing & Availability",
+        "description": "Check product pricing, bulk discount tiers, stock status, and availability.",
+        "examples": [
+          "What is the price for 500 reams of copy paper?",
+          "Is product X in stock?",
+          "Show bulk pricing for stretch film"
+        ],
+        "tags": [
+          "supplier",
+          "pricing",
+          "availability",
+          "stock",
+          "inventory",
+          "bulk-discount"
+        ]
+      },
+      {
+        "id": "supplier_lead_time",
+        "name": "Lead Time Query",
+        "description": "Look up estimated delivery and lead times for products and manufacturers.",
+        "examples": [
+          "What is the lead time for Domtar bond paper?",
+          "Which products can ship within 3 days?",
+          "Compare lead times for packaging tape"
+        ],
+        "tags": [
+          "supplier",
+          "lead-time",
+          "delivery",
+          "shipping",
+          "eta"
+        ]
+      },
+      {
+        "id": "supplier_recommendations",
+        "name": "Product Recommendations",
+        "description": "Find alternative or replacement products based on availability, lead time, price, or specifications.",
+        "examples": [
+          "Suggest alternatives for backordered item X",
+          "Find a cheaper replacement for 3M adhesive tape",
+          "What can I use instead of product Y?"
+        ],
+        "tags": [
+          "supplier",
+          "alternative",
+          "replacement",
+          "recommendation",
+          "substitute"
+        ]
+      },
+      {
+        "id": "supplier_cross_sell",
+        "name": "Cross-sell & Upsell",
+        "description": "Discover complementary products, accessories, and premium alternatives for cross-selling and upselling.",
+        "examples": [
+          "What goes well with corrugated boxes?",
+          "Show me premium alternatives to standard copy paper",
+          "Suggest accessories for our label printer order"
+        ],
+        "tags": [
+          "supplier",
+          "cross-sell",
+          "upsell",
+          "complementary",
+          "accessory",
+          "bundle"
         ]
       },
       {

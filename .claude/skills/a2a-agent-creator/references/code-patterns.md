@@ -19,6 +19,20 @@ Complete file templates. Replace `{{PLACEHOLDER}}` markers with actual values.
 | `{{MCP_SERVER_LABEL}}` | Domain name | Jira |
 | `{{MCP_DEFAULT_URL}}` | User input | https://mcp-jira.example.com/sse |
 | `{{MCP_ALLOWED_TOOLS}}` | User input | ["jira_search", "jira_create"] |
+| `{{ARTIFACT_MIME}}` | User input (if artifacts) | image/png |
+
+---
+
+## Agent Variants Matrix
+
+| MCP | Artifacts | Use template |
+|-----|-----------|-------------|
+| Yes | No | `foundry_agent.py (with MCP)` |
+| No  | No | `foundry_agent.py without MCP` (notes below MCP template) |
+| No  | Yes | `foundry_agent.py (with Artifacts)` — add artifact mixin to non-MCP base |
+| Yes | Yes | Combine MCP template + artifact mixin (add blob helpers + `_latest_artifacts` to MCP variant) |
+
+For the executor, use `foundry_agent_executor.py (with Artifacts)` when the agent returns files, otherwise use the base `foundry_agent_executor.py`.
 
 ---
 
@@ -241,9 +255,152 @@ Same structure but remove:
 - `_get_tool_description` method
 - MCP connectivity test in `create_agent()`
 
+
 ---
 
-## foundry_agent_executor.py
+## foundry_agent.py — Artifact & Blob Upload Mixin
+
+When an agent needs to return files (images, PDFs, documents, etc.) back to the host orchestrator
+as A2A artifacts, add these patterns to the agent class. This is the same pattern used by the
+Image Generator, Video Generator, and Gardening agents.
+
+### Key additions to `__init__`
+
+```python
+import uuid
+from typing import List, Any
+from datetime import timedelta
+from azure.storage.blob import (
+    BlobServiceClient,
+    BlobSasPermissions,
+    generate_blob_sas,
+)
+
+# Add to __init__:
+self._latest_artifacts: List[Dict[str, Any]] = []
+self._blob_service_client: Optional[BlobServiceClient] = None
+```
+
+### Blob upload + SAS URL generation
+
+```python
+def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
+    """Return a BlobServiceClient if Azure storage is configured."""
+    if self._blob_service_client is None:
+        conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
+        if not conn:
+            return None
+        self._blob_service_client = BlobServiceClient.from_connection_string(
+            conn, api_version="2023-11-03"
+        )
+    return self._blob_service_client
+
+def _upload_to_blob(self, file_path_or_bytes, file_name: str, context_id: str = "") -> Optional[str]:
+    """Upload a file to Azure Blob Storage and return a SAS-signed URL."""
+    client = self._get_blob_service_client()
+    if client is None:
+        logger.warning("Blob storage not configured — skipping upload")
+        return None
+
+    container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+    file_id = str(uuid.uuid4())[:8]
+
+    if context_id and "::" in context_id:
+        session_id = context_id.split("::")[0]
+        blob_name = f"uploads/{session_id}/{file_id}/{file_name}"
+    else:
+        blob_name = f"{{DOMAIN_LOWER}}-agent/{file_id}/{file_name}"
+
+    container_client = client.get_container_client(container_name)
+    try:
+        if not container_client.exists():
+            container_client.create_container()
+    except Exception:
+        pass
+
+    if isinstance(file_path_or_bytes, (bytes, bytearray)):
+        container_client.upload_blob(name=blob_name, data=file_path_or_bytes, overwrite=True)
+    else:
+        with open(file_path_or_bytes, "rb") as f:
+            container_client.upload_blob(name=blob_name, data=f, overwrite=True)
+
+    return self._generate_sas_url(client, container_name, blob_name)
+
+def _generate_sas_url(self, service_client, container: str, blob_name: str) -> Optional[str]:
+    """Generate a time-limited SAS-signed URL for a blob."""
+    sas_minutes = int(os.getenv("AZURE_BLOB_SAS_DURATION_MINUTES", "1440"))
+    try:
+        conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
+        account_key = None
+        for part in conn.split(";"):
+            if part.startswith("AccountKey="):
+                account_key = part[len("AccountKey="):]
+                break
+
+        if account_key:
+            sas_token = generate_blob_sas(
+                account_name=service_client.account_name,
+                container_name=container, blob_name=blob_name,
+                account_key=account_key,
+                permission=BlobSasPermissions(read=True),
+                expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_minutes),
+                protocol="https", version="2023-11-03",
+            )
+        else:
+            delegation_key = service_client.get_user_delegation_key(
+                key_start_time=datetime.datetime.utcnow() - timedelta(minutes=5),
+                key_expiry_time=datetime.datetime.utcnow() + timedelta(minutes=sas_minutes),
+            )
+            sas_token = generate_blob_sas(
+                account_name=service_client.account_name,
+                container_name=container, blob_name=blob_name,
+                user_delegation_key=delegation_key,
+                permission=BlobSasPermissions(read=True),
+                expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_minutes),
+                version="2023-11-03",
+            )
+
+        base_url = service_client.get_blob_client(container=container, blob=blob_name).url
+        token = sas_token.lstrip("?")
+        separator = "&" if "?" in base_url else "?"
+        return f"{base_url}{separator}{token}"
+    except Exception as e:
+        logger.error(f"Failed to generate SAS URL: {e}")
+        return None
+```
+
+### Artifact record pattern
+
+After generating/uploading a file, store an artifact record for the executor to pick up:
+
+```python
+blob_url = self._upload_to_blob(file_bytes, file_name, context_id)
+if blob_url:
+    artifact_record = {
+        "artifact-uri": blob_url,           # SAS-signed URL (required)
+        "file-name": file_name,             # e.g. "report.pdf"
+        "mime": "{{ARTIFACT_MIME}}",         # e.g. "image/png", "application/pdf"
+        "storage-type": "azure_blob",
+        "status": "stored",
+        "provider": "{{DOMAIN_LOWER}}",
+        "file-size": len(file_bytes),
+    }
+    self._latest_artifacts.append(artifact_record)
+```
+
+### pop_latest_artifacts (required)
+
+```python
+def pop_latest_artifacts(self) -> List[Dict[str, Any]]:
+    """Return and clear accumulated artifacts. Called by the executor after each response."""
+    artifacts = list(self._latest_artifacts)
+    self._latest_artifacts.clear()
+    return artifacts
+```
+
+---
+
+## foundry_agent_executor.py (base — no artifacts)
 
 This file is nearly identical across all agents. Only the import and class name change.
 
@@ -470,6 +627,100 @@ def create_foundry_agent_executor(card: AgentCard) -> FoundryAgentExecutor:
 
 async def initialize_foundry_agents_at_startup():
     await FoundryAgentExecutor.initialize_at_startup()
+```
+
+
+
+---
+
+## foundry_agent_executor.py (with Artifacts)
+
+Use this variant when the agent returns files via `pop_latest_artifacts()`.
+
+**Additional import:** `from a2a.utils.message import new_agent_text_message, new_agent_parts_message`
+
+**Replace `_process_request` in the base executor with this artifact-aware version.** Key differences marked with `# ARTIFACT:` comments:
+
+```python
+async def _process_request(self, message_parts, context_id, task_updater, request_context=None):
+    try:
+        user_message = self._convert_parts_to_text(message_parts)
+        agent = await self._get_or_create_agent()
+        session_id = await self._get_or_create_session(context_id, agent)
+        responses = []
+        seen_tools = set()
+
+        async for event in agent.run_conversation_stream(session_id, user_message):
+            if event.startswith("\U0001f6e0\ufe0f Remote agent executing:"):
+                tool_desc = event.replace("\U0001f6e0\ufe0f Remote agent executing: ", "").strip()
+                if tool_desc not in seen_tools:
+                    seen_tools.add(tool_desc)
+                    await task_updater.update_status(
+                        TaskState.working,
+                        message=new_agent_text_message(event, context_id=context_id)
+                    )
+            elif event.startswith("Error:") or event.startswith("\u274c"):
+                await task_updater.failed(message=new_agent_text_message(event, context_id=context_id))
+                return
+            elif "```NEEDS_INPUT" in event or event.strip().startswith("NEEDS_INPUT:"):
+                block_match = re.search(r'```NEEDS_INPUT\s*\n(.*?)\n```END_NEEDS_INPUT', event, re.DOTALL)
+                question = block_match.group(1).strip() if block_match else event.replace("NEEDS_INPUT:", "", 1).strip()
+                self._waiting_for_input[context_id] = {"question": question, "session_id": session_id}
+                parts_out = [TextPart(text=question)]
+                if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                    parts_out.append(DataPart(data={'type': 'token_usage', **agent.last_token_usage}))
+                await task_updater.update_status(
+                    TaskState.input_required,
+                    message=Message(role="agent", messageId=str(uuid.uuid4()), parts=parts_out, contextId=context_id),
+                    final=True
+                )
+                return
+            else:
+                responses.append(event)
+
+        # ARTIFACT: Check for file artifacts from the agent
+        artifacts = agent.pop_latest_artifacts()
+        artifact_parts = []
+        if artifacts:
+            for artifact in artifacts:
+                if isinstance(artifact, dict) and artifact.get("artifact-uri"):
+                    file_with_uri = FileWithUri(
+                        name=artifact.get("file-name", "artifact"),
+                        uri=artifact["artifact-uri"],
+                        mimeType=artifact.get("mime", "application/octet-stream")
+                    )
+                    artifact_parts.append(Part(root=FilePart(file=file_with_uri)))
+                else:
+                    artifact_parts.append(Part(root=DataPart(data=artifact)))
+            # Send artifact message immediately
+            await task_updater.update_status(TaskState.working,
+                message=new_agent_parts_message(parts=artifact_parts, context_id=context_id))
+
+        # ARTIFACT: Build final parts — text + artifacts + token usage
+        if responses:
+            final_response = responses[-1]
+            final_parts = [Part(root=TextPart(text=final_response))]
+            if artifact_parts:
+                final_parts.extend(artifact_parts)
+            if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                final_parts.append(Part(root=DataPart(data={'type': 'token_usage', **agent.last_token_usage})))
+            await task_updater.complete(
+                message=new_agent_parts_message(parts=final_parts, context_id=context_id)
+            )
+        else:
+            if artifact_parts:
+                final_parts = [Part(root=TextPart(text="File generated successfully."))]
+                final_parts.extend(artifact_parts)
+                await task_updater.complete(
+                    message=new_agent_parts_message(parts=final_parts, context_id=context_id)
+                )
+            else:
+                await task_updater.complete(
+                    message=Message(role="agent", messageId=str(uuid.uuid4()),
+                                    parts=[TextPart(text="No response generated")], contextId=context_id)
+                )
+    except Exception as e:
+        await task_updater.failed(message=new_agent_text_message(f"Error: {e}", context_id=context_id))
 ```
 
 ---
@@ -753,6 +1004,14 @@ dependencies = [
 ]
 ```
 
+### pyproject.toml — additional dependency for artifact agents
+
+Add when the agent uploads files to Azure Blob Storage:
+
+```toml
+    "azure-storage-blob>=12.19.0",
+```
+
 ---
 
 ## Dockerfile
@@ -800,6 +1059,17 @@ LOG_LEVEL=INFO
 
 # MCP (include only if MCP enabled)
 # {{MCP_URL_ENV_VAR}}=""
+```
+
+### .env.example — additional vars for artifact agents
+
+Add when the agent uploads files to Azure Blob Storage:
+
+```bash
+# Azure Blob Storage (for file artifact uploads and SAS URL generation)
+AZURE_STORAGE_CONNECTION_STRING=""
+AZURE_BLOB_CONTAINER="a2a-files"
+AZURE_BLOB_SAS_DURATION_MINUTES=1440
 ```
 
 ---

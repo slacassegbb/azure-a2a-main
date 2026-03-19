@@ -31,6 +31,9 @@ Collect from the user:
 | MCP enabled? | true/false | Yes |
 | MCP server URL | env var + default URL | If MCP |
 | MCP allowed tools | List of tool names | If MCP |
+| Returns file artifacts? | true/false | Yes |
+| Artifact type | image/png, application/pdf, etc. | If artifacts |
+| Blob storage needed? | true/false (upload to Azure Blob) | If artifacts |
 
 ### Step 2: Derive Naming and Port
 
@@ -71,13 +74,15 @@ Read **references/code-patterns.md** for complete templates. Replace all `{{PLAC
 
 **MCP vs non-MCP**: The code-patterns reference provides both variants for `foundry_agent.py`. Choose based on user input.
 
+**Artifacts vs no artifacts**: If the agent returns files (images, PDFs, etc.), use the artifact-enabled variants for `foundry_agent.py` and `foundry_agent_executor.py`. These add blob storage upload, SAS URL generation, `_latest_artifacts` list, and `pop_latest_artifacts()` to the agent, and `FilePart(FileWithUri(...))` artifact return to the executor.
+
 Generate in this order:
-1. `foundry_agent.py` — Core logic. **Most customization** needed here: class name, MCP config, agent instructions, tool descriptions.
-2. `foundry_agent_executor.py` — A2A bridge. Change only: import, class references, log messages.
+1. `foundry_agent.py` — Core logic. **Most customization** needed here: class name, MCP config, agent instructions, tool descriptions. If artifacts enabled, include blob upload helpers and `_latest_artifacts` pattern.
+2. `foundry_agent_executor.py` — A2A bridge. Change only: import, class references, log messages. If artifacts enabled, use the artifact-aware executor variant that calls `pop_latest_artifacts()` and converts to `FilePart(FileWithUri(...))`.
 3. `__main__.py` — Server, CLI, agent card. Define skills here (must appear in 3 places: `create_a2a_server()`, `launch_ui()`, and `main_async()`).
-4. `pyproject.toml` — Package name and description.
+4. `pyproject.toml` — Package name and description. Add `azure-storage-blob>=12.19.0` if artifacts/blob storage enabled.
 5. `Dockerfile` — Port default and comment.
-6. `.env.example` — Add MCP env vars if applicable.
+6. `.env.example` — Add MCP env vars if applicable. Add blob storage env vars if artifacts enabled.
 
 ### Step 5: Verify
 
@@ -87,6 +92,8 @@ Generate in this order:
 - [ ] Skills are defined identically in all 3 locations in `__main__.py`
 - [ ] Agent instructions include NEEDS_INPUT/HITL documentation
 - [ ] MCP config present only if MCP is enabled
+- [ ] Artifact support: `_latest_artifacts` + `pop_latest_artifacts()` in agent, artifact handling in executor (if applicable)
+- [ ] Blob storage env vars in `.env.example` and `azure-storage-blob` in `pyproject.toml` (if artifacts enabled)
 - [ ] `human_interaction` skill is always included
 
 ### Step 6: Configure & Test
@@ -97,15 +104,16 @@ Run the automated test script to validate the scaffolded agent end-to-end:
 python3 .claude/skills/a2a-agent-creator/scripts/test_agent.py remote_agents/azurefoundry_{Domain} --port {PORT}
 ```
 
-The script performs 6 checks:
+The script performs 8 checks:
 1. **File structure** — All 9 required files present
 2. **Python syntax** — `ast.parse` on all `.py` files
-3. **Credentials** — Discovers Azure creds from sibling agent `.env` files, creates `.env`
+3. **Credentials** — Discovers Azure AI + blob storage creds from sibling agent `.env` files, creates `.env`
 4. **Dependencies** — Runs `uv sync` to install packages
 5. **Imports** — Verifies `FoundryAgentExecutor` and A2A SDK imports resolve
 6. **Server endpoints** — Starts the server, tests `/health` (200) and `/.well-known/agent.json` (200, validates skills)
+7. **Live A2A query** — Sends a real `message/send` request using the agent's skill examples, validates response text, checks for model refusals, and verifies artifact URIs are accessible (if returned)
 
-If any check fails, fix the issue and re-run. All 7 result lines must show `PASS`.
+If any check fails, fix the issue and re-run. All result lines must show `PASS`.
 
 ## Key Conventions
 
