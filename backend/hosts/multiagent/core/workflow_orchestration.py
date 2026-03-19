@@ -1411,10 +1411,21 @@ Analyze the context and return your structured result."""
                 context_parts.append(f"### Output from Step {label}:\n{cleaned}")
                 total_chars += len(cleaned)
         elif previous_task_outputs:
-            # TIERED CONTEXT: Last 2 outputs in full, older outputs use LLM summaries.
-            # This is the core of the context compaction strategy from the OpenDev paper.
+            # ADAPTIVE TIERED CONTEXT: apply compaction only under context pressure.
+            # Low pressure (<0.30): include ALL outputs verbatim (up to max_context_chars).
+            # Medium pressure (0.30-0.70): last 2 full, older use LLM summaries.
+            # High pressure (>0.70): last 2 full, older aggressively compressed.
             num_outputs = len(previous_task_outputs)
-            recent_threshold = 2  # Keep last N outputs in full
+
+            # Measure pressure using the same method as the summarization trigger
+            _output_chars = sum(len(o) for o in previous_task_outputs if o)
+            _plan_chars = len(plan.model_dump_json()) if plan else 0
+            _est_tokens = (_output_chars + _plan_chars) // 4 + 3000
+            _pressure = _est_tokens / 128000
+
+            # Under low pressure, pass everything in full — no tiering needed
+            recent_threshold = 2 if _pressure >= 0.30 else num_outputs
+            log_info(f"[Context Builder] Pressure: {_pressure:.2f}, recent_threshold: {recent_threshold}/{num_outputs}")
 
             # Build a summary lookup from the plan's completed tasks
             task_summaries = {}
