@@ -1045,18 +1045,15 @@ Analyze the context and return your structured result."""
           0.30–0.70 (med): last 2 full, older use plan summaries or 500-char truncation
           > 0.70 (high):   last 2 full, all older aggressively compressed (300 chars)
         """
-        import re as _re
         if not previous_task_outputs:
             return ""
 
-        _url_pattern = _re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', _re.MULTILINE)
-        _path_pattern = _re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
+        _url_pattern = re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', re.MULTILINE)
+        _path_pattern = re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
 
         num_outputs = len(previous_task_outputs)
-        output_chars = sum(len(o) for o in previous_task_outputs if o)
-        plan_chars = len(plan.model_dump_json()) if plan else 0
-        est_tokens = (output_chars + plan_chars) // 4 + 3000
-        pressure = est_tokens / 128000
+        # Reuse _measure_context_pressure to keep pressure formula in one place
+        pressure = self._measure_context_pressure(plan, previous_task_outputs)
 
         # Low pressure: include everything; otherwise apply recent window
         recent_threshold = 2 if pressure >= 0.30 else num_outputs
