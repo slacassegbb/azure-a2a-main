@@ -1356,14 +1356,12 @@ Analyze the context and return your structured result."""
 
         Falls back to the legacy flat context dump when metadata is absent.
         """
-        import re as _re
-
         task_desc = task.task_description
         recommended_agent = task.recommended_agent or "Agent"
         metadata = task.planner_metadata  # PlannerTask or None
 
         # ── Extract step label from task description ──
-        step_match = _re.search(r'\[Step\s+(\d+[a-z]?)\]', task_desc)
+        step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', task_desc)
         step_label = step_match.group(1) if step_match else None
 
         # Count total steps in plan
@@ -1378,7 +1376,7 @@ Analyze the context and return your structured result."""
 
         # ── SECTION: Task ──
         # Strip the [Step X] prefix from the task text since we already stated it in Role
-        clean_task = _re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc).strip()
+        clean_task = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc).strip()
         parts.append(f"## Your Task\n{clean_task}")
 
         # ── SECTION: Workflow Goal ──
@@ -1433,8 +1431,6 @@ Analyze the context and return your structured result."""
         outputs from those specific steps. Otherwise fall back to including
         all previous outputs (legacy behavior).
         """
-        import re as _re
-
         max_context_chars = 50000
         context_parts = []
         total_chars = 0
@@ -1450,8 +1446,8 @@ Analyze the context and return your structured result."""
             required_steps = set(metadata.required_inputs_from_steps)
 
         # Strip blob URLs and local paths
-        _url_pattern = _re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', _re.MULTILINE)
-        _path_pattern = _re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
+        _url_pattern = re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', re.MULTILINE)
+        _path_pattern = re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
 
         if required_steps and plan and plan.tasks:
             # SELECTIVE: Only include outputs from the requested steps
@@ -1459,7 +1455,7 @@ Analyze the context and return your structured result."""
                 if t.state != "completed" or not t.output:
                     continue
                 # Extract step label from this task's description
-                sm = _re.search(r'\[Step\s+(\d+[a-z]?)\]', t.task_description)
+                sm = re.search(r'\[Step\s+(\d+[a-z]?)\]', t.task_description)
                 if not sm:
                     continue
                 label = sm.group(1)
