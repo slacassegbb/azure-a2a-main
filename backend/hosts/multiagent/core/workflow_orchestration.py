@@ -967,10 +967,15 @@ Analyze the context and return your structured result."""
                     {
                         "role": "system",
                         "content": (
-                            "You are a concise summarizer for a multi-agent workflow orchestrator. "
-                            "Summarize the agent's output in 1-3 sentences (max 200 characters). "
-                            "Focus on: what action was taken, what was produced, and key data points. "
-                            "If files or documents were created, mention them. Be factual, not verbose."
+                            "You are a lossless summarizer for a multi-agent workflow orchestrator. "
+                            "Your job is to compress narrative prose while preserving ALL identifiers exactly. "
+                            "CRITICAL RULES:\n"
+                            "1. Copy every identifier VERBATIM: SKUs, product codes, order numbers, email addresses, "
+                            "names, URLs, file names, numeric values, dates, and any reference codes.\n"
+                            "2. NEVER paraphrase, abbreviate, or infer identifiers — copy them character-for-character.\n"
+                            "3. Compress only the narrative/explanation around them.\n"
+                            "4. If an action was taken (e.g., UPDATE, email sent), state what was done and include the exact values used.\n"
+                            "Produce 2-4 sentences max."
                         ),
                     },
                     {
@@ -983,7 +988,7 @@ Analyze the context and return your structured result."""
                     },
                 ],
                 temperature=0.0,
-                max_tokens=100,
+                max_tokens=250,
             )
 
             summary = completion.choices[0].message.content.strip()
@@ -3616,16 +3621,20 @@ Analyze the plan and determine the next step."""
                         _current_parallel_call_id.set(None)
                         task.updated_at = datetime.now(timezone.utc)
 
-                    # ── Context Compaction: summarize completed parallel task outputs ──
-                    for task in pydantic_tasks:
-                        if task.state == "completed" and task.output and not task.summary:
-                            output_text = task.output.get("result", "") or str(task.output)
-                            task.summary = await self._summarize_task_output(
-                                output_text=output_text,
-                                agent_name=task.recommended_agent or "Agent",
-                                task_description=task.task_description,
-                                context_id=context_id,
-                            )
+                    # ── Adaptive Context Compaction (parallel) ──
+                    # Only compress when context pressure demands it.
+                    _COMPACTION_THRESHOLD = 8000
+                    _total_output_chars = sum(len(o) for o in all_task_outputs if o)
+                    if _total_output_chars > _COMPACTION_THRESHOLD and len(all_task_outputs) > 2:
+                        for task in pydantic_tasks:
+                            if task.state == "completed" and task.output and not task.summary:
+                                output_text = task.output.get("result", "") or str(task.output)
+                                task.summary = await self._summarize_task_output(
+                                    output_text=output_text,
+                                    agent_name=task.recommended_agent or "Agent",
+                                    task_description=task.task_description,
+                                    context_id=context_id,
+                                )
 
                     # If any task triggered HITL pause, save plan and return
                     if hitl_pause:
@@ -3679,8 +3688,15 @@ Analyze the plan and determine the next step."""
                         if result.get("output"):
                             all_task_outputs.append(result["output"])
 
-                        # ── Context Compaction: summarize completed sequential task output ──
-                        if task.state == "completed" and task.output and not task.summary:
+                        # ── Adaptive Context Compaction (sequential) ──
+                        # Only compress when context pressure demands it — aligned with
+                        # adaptive compaction paper: don't summarize small contexts.
+                        # Also skip the most recent 2 outputs (context builder keeps them full anyway).
+                        _COMPACTION_THRESHOLD = 8000  # ~2K tokens; below this, pass everything verbatim
+                        _total_output_chars = sum(len(o) for o in all_task_outputs if o)
+                        if (task.state == "completed" and task.output and not task.summary
+                                and _total_output_chars > _COMPACTION_THRESHOLD
+                                and len(all_task_outputs) > 2):
                             output_text = task.output.get("result", "") or str(task.output)
                             task.summary = await self._summarize_task_output(
                                 output_text=output_text,
