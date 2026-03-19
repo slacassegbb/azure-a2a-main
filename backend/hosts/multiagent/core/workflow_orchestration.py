@@ -1006,6 +1006,33 @@ Analyze the context and return your structured result."""
             # Fallback: simple truncation
             return output_text[:250] + "..." if len(output_text) > 250 else output_text
 
+    def _measure_context_pressure(
+        self,
+        plan,
+        all_task_outputs: list,
+    ) -> float:
+        """Estimate context pressure as a ratio of the model's context window (0.0–1.0).
+
+        Uses chars/4 as a token estimate (standard approximation).
+        Includes plan state, accumulated outputs, and a fixed overhead for system
+        prompt + user message (~3000 tokens).
+
+        Tiers (aligned with adaptive compaction paper):
+          < 0.30  → low:    no compaction needed
+          0.30–0.70 → medium: summarize steps older than the recent window
+          > 0.70  → high:   summarize everything, including recent steps
+        """
+        _CONTEXT_WINDOW = 128000  # gpt-4o
+        _CHARS_PER_TOKEN = 4
+        _OVERHEAD_TOKENS = 3000   # system prompt + user message + planner prompt
+
+        plan_chars = len(plan.model_dump_json()) if plan else 0
+        output_chars = sum(len(o) for o in all_task_outputs if o)
+        total_tokens = (plan_chars + output_chars) // _CHARS_PER_TOKEN + _OVERHEAD_TOKENS
+        pressure = total_tokens / _CONTEXT_WINDOW
+        log_info(f"[Context Compaction] Pressure: {pressure:.2f} ({total_tokens} est. tokens)")
+        return pressure
+
     async def _reflect_on_task_results(
         self,
         completed_tasks: List[AgentModeTask],
@@ -3622,19 +3649,33 @@ Analyze the plan and determine the next step."""
                         task.updated_at = datetime.now(timezone.utc)
 
                     # ── Adaptive Context Compaction (parallel) ──
-                    # Only compress when context pressure demands it.
-                    _COMPACTION_THRESHOLD = 8000
-                    _total_output_chars = sum(len(o) for o in all_task_outputs if o)
-                    if _total_output_chars > _COMPACTION_THRESHOLD and len(all_task_outputs) > 2:
-                        for task in pydantic_tasks:
-                            if task.state == "completed" and task.output and not task.summary:
-                                output_text = task.output.get("result", "") or str(task.output)
+                    # Measure actual context pressure; apply tiered strategy from compaction paper.
+                    _pressure = self._measure_context_pressure(plan, all_task_outputs)
+                    _recent_window = 2  # always keep last N outputs verbatim
+                    for task in pydantic_tasks:
+                        if not (task.state == "completed" and task.output and not task.summary):
+                            continue
+                        output_text = task.output.get("result", "") or str(task.output)
+                        # Low pressure: no compaction — preserve verbatim
+                        if _pressure < 0.30:
+                            pass
+                        # Medium pressure: summarize only steps outside the recent window
+                        elif _pressure < 0.70:
+                            if len(all_task_outputs) > _recent_window:
                                 task.summary = await self._summarize_task_output(
                                     output_text=output_text,
                                     agent_name=task.recommended_agent or "Agent",
                                     task_description=task.task_description,
                                     context_id=context_id,
                                 )
+                        # High pressure: summarize everything
+                        else:
+                            task.summary = await self._summarize_task_output(
+                                output_text=output_text,
+                                agent_name=task.recommended_agent or "Agent",
+                                task_description=task.task_description,
+                                context_id=context_id,
+                            )
 
                     # If any task triggered HITL pause, save plan and return
                     if hitl_pause:
@@ -3689,21 +3730,31 @@ Analyze the plan and determine the next step."""
                             all_task_outputs.append(result["output"])
 
                         # ── Adaptive Context Compaction (sequential) ──
-                        # Only compress when context pressure demands it — aligned with
-                        # adaptive compaction paper: don't summarize small contexts.
-                        # Also skip the most recent 2 outputs (context builder keeps them full anyway).
-                        _COMPACTION_THRESHOLD = 8000  # ~2K tokens; below this, pass everything verbatim
-                        _total_output_chars = sum(len(o) for o in all_task_outputs if o)
-                        if (task.state == "completed" and task.output and not task.summary
-                                and _total_output_chars > _COMPACTION_THRESHOLD
-                                and len(all_task_outputs) > 2):
+                        # Measure actual context pressure; apply tiered strategy from compaction paper.
+                        if task.state == "completed" and task.output and not task.summary:
+                            _pressure = self._measure_context_pressure(plan, all_task_outputs)
+                            _recent_window = 2  # always keep last N outputs verbatim
                             output_text = task.output.get("result", "") or str(task.output)
-                            task.summary = await self._summarize_task_output(
-                                output_text=output_text,
-                                agent_name=task.recommended_agent or "Agent",
-                                task_description=task.task_description,
-                                context_id=context_id,
-                            )
+                            # Low pressure: no compaction — preserve verbatim
+                            if _pressure < 0.30:
+                                pass
+                            # Medium pressure: summarize only steps outside the recent window
+                            elif _pressure < 0.70:
+                                if len(all_task_outputs) > _recent_window:
+                                    task.summary = await self._summarize_task_output(
+                                        output_text=output_text,
+                                        agent_name=task.recommended_agent or "Agent",
+                                        task_description=task.task_description,
+                                        context_id=context_id,
+                                    )
+                            # High pressure: summarize everything
+                            else:
+                                task.summary = await self._summarize_task_output(
+                                    output_text=output_text,
+                                    agent_name=task.recommended_agent or "Agent",
+                                    task_description=task.task_description,
+                                    context_id=context_id,
+                                )
 
                         # Emit agent_complete/agent_error based on task state from the plan
                         # Skip EVALUATE/QUERY tasks — they emit their own events
