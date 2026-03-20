@@ -317,6 +317,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         session_id: currentSessionId,  // Session ID for agent lookup (e.g., sess_xxx)
         conversation_id: conversationIdOnly,  // Just the conversation ID, backend will combine with session_id
         timeout: 600,  // 10 minutes - generous for multi-agent workflows
+        enable_routing: true,  // Enable intelligent routing so workflow plans are persisted
       };
       
       // Only include activated_workflow_ids if we have them (and no explicit workflow)
@@ -814,14 +815,15 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           JSON.stringify({
             type: "session.update",
             session: {
-              instructions: `You are a helpful assistant. Respond in the same language the user speaks to you. When the user asks you to do something, you MUST call the execute_query function with their request. After receiving the function result, summarize it conversationally and briefly.
+              instructions: `You are a voice interface to an AI agent network. You NEVER answer questions yourself. You ALWAYS delegate to the agent network by calling execute_query.
 
-IMPORTANT RULES:
-1. Match the user's language - if they speak English, respond in English; if French, respond in French, etc.
-2. For ANY user request, call execute_query immediately
-3. Keep your spoken responses brief and natural
-4. Do not read long technical details - summarize them
-5. Be conversational and friendly`,
+CRITICAL RULES:
+1. NEVER answer a question directly. ALWAYS call execute_query first, no matter how simple the question seems.
+2. After receiving the function result, summarize it conversationally and briefly. Do NOT call execute_query again after receiving a result.
+3. Match the user's language - if they speak English, respond in English; if French, respond in French, etc.
+4. Keep your spoken responses brief and natural.
+5. Do not read long technical details - summarize them.
+6. You have NO knowledge of your own. Every user request must go through execute_query.`,
               modalities: ["text", "audio"],
               turn_detection: {
                 type: "server_vad",

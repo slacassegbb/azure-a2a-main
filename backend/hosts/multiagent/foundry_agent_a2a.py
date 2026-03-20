@@ -4974,8 +4974,8 @@ Answer with just JSON:
                     # combine all outputs and return "Workflow completed" - we should
                     # return only the HITL agent's message (the last output).
                     # =========================================================
-                    if session_context.current_plan is not None:
-                        log_debug(f"[HITL PAUSE] Detected saved plan - workflow paused for human input")
+                    if session_context.current_plan is not None and session_context.pending_input_agent:
+                        log_debug(f"[HITL PAUSE] Detected saved plan with pending agent - workflow paused for human input")
                         log_info(f"[HITL PAUSE] Plan saved for resume, returning HITL response only")
                         
                         # Show the message that was sent (so user knows what they're approving)

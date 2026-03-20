@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 210 20% 22%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 20% 22%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 20% 22%;
+    --primary: 208 100% 30%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 210 20% 22%;
+    --muted: 210 20% 96%;
+    --muted-foreground: 210 10% 45%;
+    --accent: 208 100% 95%;
+    --accent-foreground: 208 100% 30%;
+    --destructive: 5 84% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 20% 88%;
+    --input: 210 20% 88%;
+    --ring: 208 100% 30%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 210 20% 7%;
+    --foreground: 0 0% 98%;
+    --card: 210 20% 10%;
+    --card-foreground: 0 0% 98%;
+    --popover: 210 20% 10%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 208 90% 65%;
+    --primary-foreground: 210 20% 10%;
+    --secondary: 210 20% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 210 20% 15%;
+    --muted-foreground: 210 10% 65%;
+    --accent: 208 90% 20%;
+    --accent-foreground: 208 90% 65%;
+    --destructive: 5 80% 65%;
+    --destructive-foreground: 210 20% 10%;
+    --border: 210 20% 18%;
+    --input: 210 20% 18%;
+    --ring: 208 90% 65%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Safe area insets for notched phones */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+  .safe-top { padding-top: env(safe-area-inset-top); }
+}
+
+/* Smooth scrolling for mobile */
+.scroll-smooth { -webkit-overflow-scrolling: touch; }
+
+/* Animated gradient for voice processing */
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.animate-gradient-flow {
+  background-size: 200% 200%;
+  animation: gradient-flow 2s ease infinite;
+}
+
+/* Pulse ring animation for voice button */
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+.animate-pulse-ring {
+  animation: pulse-ring 1.5s ease-out infinite;
+}

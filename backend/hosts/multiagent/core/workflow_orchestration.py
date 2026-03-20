@@ -3977,5 +3977,10 @@ Analyze the plan and determine the next step."""
             asyncio.create_task(emit_host_tokens())
         except Exception:
             pass  # Don't let token emission failures break the flow
-        
+
+        # Save the completed plan to session context so it gets persisted
+        # in message metadata as workflow_plan (for history reconstruction)
+        if plan is not None:
+            session_context.current_plan = plan
+
         return all_task_outputs
