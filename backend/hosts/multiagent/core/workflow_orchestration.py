@@ -3569,6 +3569,36 @@ Analyze the plan and determine the next step."""
                     pydantic_tasks.append(task)
                     log_debug(f"[Agent Mode] Created task: {task.task_description[:50]}...")
                 
+                # =========================================================
+                # HUMAN_INPUT_REQUIRED: Intercept before dispatch
+                # If any task description contains [HUMAN_INPUT_REQUIRED],
+                # formally pause the workflow and save the plan — do not
+                # dispatch to the agent. The orchestration resumes on the
+                # user's next message with the full task history intact.
+                # =========================================================
+                hitl_tasks = [
+                    t for t in pydantic_tasks
+                    if "HUMAN_INPUT_REQUIRED" in (t.task_description or "").upper()
+                ]
+                if hitl_tasks:
+                    for hitl_task in hitl_tasks:
+                        hitl_task.state = "input_required"
+                        hitl_task.updated_at = datetime.now(timezone.utc)
+                        # Strip the marker from what the user sees
+                        clean_desc = re.sub(r'\[?HUMAN_INPUT_REQUIRED\]?\s*', '', hitl_task.task_description, flags=re.IGNORECASE).strip()
+                        log_info(f"[HITL] Intercepted HUMAN_INPUT_REQUIRED step — pausing workflow. Step: {clean_desc[:80]}")
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent",
+                            f"⏸ Workflow paused — waiting for your input.\n\n{clean_desc}",
+                            context_id,
+                            event_type="phase",
+                            metadata={"phase": "hitl_pause", "task_description": clean_desc},
+                        )
+                    session_context.current_plan = plan
+                    log_info(f"[HITL] Saved plan with {len(plan.tasks)} tasks for resume (HUMAN_INPUT_REQUIRED)")
+                    await self._emit_plan_update(plan, context_id, reasoning="Waiting for human input...")
+                    return all_task_outputs
+
                 # Execute tasks (parallel or sequential)
                 if is_parallel:
                     # ============================================
