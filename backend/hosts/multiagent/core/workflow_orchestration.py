@@ -3238,13 +3238,24 @@ Analyze the plan and determine the next step."""
                 # the trace, then feedback is injected as transient context —
                 # never mutating plan.goal (which compounds across iterations
                 # and can trigger content filters on long workflows).
+                # Skip critique for HUMAN_INPUT_REQUIRED tasks — they
+                # intentionally have no agent and will be intercepted below.
                 # =========================================================
-                critique = await self._critique_planned_action(
-                    next_step=next_step,
-                    plan=plan,
-                    workflow=workflow,
-                    context_id=context_id,
-                )
+                _planned_task_descs = []
+                if next_step.next_task:
+                    _planned_task_descs.append(next_step.next_task.task_description or "")
+                if next_step.next_tasks:
+                    _planned_task_descs.extend(t.task_description or "" for t in next_step.next_tasks)
+                _is_hitl_step = any("HUMAN_INPUT_REQUIRED" in d.upper() for d in _planned_task_descs)
+
+                critique = None
+                if not _is_hitl_step:
+                    critique = await self._critique_planned_action(
+                        next_step=next_step,
+                        plan=plan,
+                        workflow=workflow,
+                        context_id=context_id,
+                    )
                 if critique and not critique.approve:
                     if not _critique_replan_used:
                         # Disapproved — inject concern into prompt context and re-plan ONCE.
