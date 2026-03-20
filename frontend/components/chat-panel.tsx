@@ -4564,9 +4564,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   }
                 </TooltipContent>
               </Tooltip>
-              <VoiceButton 
-                sessionId={currentSessionId} 
-                contextId={contextId} 
+              <VoiceButton
+                sessionId={currentSessionId}
+                contextId={contextId}
                 conversationId={conversationId}
                 onEnsureConversation={ensureConversation}
                 onFirstMessage={(convId, transcript) => {
@@ -4580,7 +4580,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     title: newTitle
                   });
                 }}
-                disabled={isInferencing} 
+                isInferencing={isInferencing}
+                onVoiceInterrupt={(transcript) => {
+                  // Route voice interrupt through the same system as text-based interrupt
+                  sendMessage({
+                    type: "interrupt_workflow",
+                    conversationId: conversationId,
+                    sessionId: currentSessionId,
+                    contextId: contextId,
+                    instruction: transcript
+                  });
+                  // Show the redirect instruction as a user message
+                  setMessages(prev => [...prev, {
+                    id: `interrupt_${Date.now()}`,
+                    role: "user" as const,
+                    content: `⚡ ${transcript}`,
+                  }]);
+                }}
               />
               {/* Three-state button: Redirect (⚡) / Stop (■) / Send (→) */}
               {isInferencing && input.trim() ? (

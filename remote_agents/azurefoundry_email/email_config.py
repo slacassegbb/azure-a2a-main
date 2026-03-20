@@ -397,19 +397,17 @@ def get_emails(
         if since_date:
             filters.append(f"receivedDateTime ge {since_date}T00:00:00Z")
 
-        # Construct URL - use /messages directly for broader compatibility
-        # The /mailFolders/inbox/messages path can have issues with some mailbox configurations
-        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages"
+        # Use inbox-specific endpoint by default so sent/draft emails don't crowd
+        # out inbox items in the $top window. /messages returns all mail folders
+        # which causes subject-filtered searches to miss inbox items when many
+        # sent emails exist (e.g., each workflow run adds 2+ sent emails).
+        target_folder = (folder or "inbox").lower()
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/{target_folder}/messages"
         params = {
             "$top": fetch_count,
             "$orderby": "receivedDateTime desc",
             "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview,body,hasAttachments,toRecipients,ccRecipients,parentFolderId"
         }
-        
-        # Add folder filter if not inbox (inbox is default for /messages)
-        if folder and folder.lower() != "inbox":
-            # For specific folders, we need to use the mailFolders endpoint
-            url = f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/{folder}/messages"
         
         if filters:
             params["$filter"] = " and ".join(filters)

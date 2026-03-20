@@ -18,12 +18,16 @@ interface VoiceRealtimeHook {
   isListening: boolean;
   isSpeaking: boolean;
   isProcessing: boolean;
+  isTalking: boolean;
+  isVoiceProcessing: boolean;
   currentAgent: string | null;
   transcript: string;
   result: string;
   error: string | null;
   startConversation: () => Promise<void>;
   stopConversation: () => void;
+  startTalking: () => void;
+  stopTalking: (options?: { interruptMode?: boolean }) => void;
   updateContextId: (newContextId: string) => void;  // Allow updating contextId synchronously
 }
 
@@ -85,7 +89,11 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
   const [transcript, setTranscript] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isTalking, setIsTalking] = useState(false);
+  const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
 
+  const isTalkingRef = useRef(false);
+  const autoActivateAfterPlaybackRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const backendWsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -132,22 +140,33 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     return data.token;
   };
 
-  // Speak a filler message using Azure Voice Live API with out-of-band TTS
-  // Uses response.create with conversation: "none" to avoid corrupting the conversation state
+  // Speak a filler announcement using Azure Voice Live TTS (same AI voice)
+  // Works during the function-execution window when no response is active
   const speakFillerViaAzure = useCallback((text: string) => {
-    // Check if we have an active Azure WebSocket connection
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       logDebug("[VoiceRealtime] Azure WebSocket not ready for filler TTS");
       return;
     }
-    
-    // Skip if there's already an active response (to avoid "Conversation already has an active response" error)
+
     if (isResponseActiveRef.current) {
       logDebug("[VoiceRealtime] Skipping filler - response already active:", text);
       return;
     }
-    
-    logDebug("[VoiceRealtime] 🗣️ Filler skipped (not supported on standard Realtime API):", text);
+
+    if (!isProcessingRef.current) {
+      logDebug("[VoiceRealtime] Skipping filler - not processing a query:", text);
+      return;
+    }
+
+    logDebug("[VoiceRealtime] 🗣️ Speaking filler via Voice Live:", text);
+    isResponseActiveRef.current = true;
+    wsRef.current.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+        instructions: `Say exactly this in a brief, natural way: "${text}"`,
+      }
+    }));
   }, []);
 
   // Connect to backend WebSocket for status events
@@ -178,42 +197,38 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           logDebug("[VoiceRealtime] Backend event received:", data.eventType, "isProcessing:", isProcessingRef.current);
         }
         
-        // Handle remote_agent_activity events - update visual status
+        // Handle remote_agent_activity events - announce via Voice Live TTS
         if (data.eventType === "remote_agent_activity") {
-          logDebug("[VoiceRealtime] 📣 remote_agent_activity event:", JSON.stringify(data).substring(0, 300));
-          
           if (!isProcessingRef.current) {
-            logDebug("[VoiceRealtime] ⚠️ Ignoring remote_agent_activity - not processing");
             return;
           }
-          
-          const agentName = data.data?.agentName || data.agentName || "";
-          const content = data.data?.content || data.content || "";
-          
+
+          const agentName = data.agentName || data.data?.agentName || "";
+          const activityType = data.activityType || data.data?.activityType || "";
+
           // Skip host agent messages
           if (agentName.toLowerCase().includes("host") || agentName.toLowerCase().includes("foundry-host")) {
             return;
           }
-          
-          // Create friendly name for visual display
+
+          // Create friendly name
           const friendlyName = agentName
             .replace(/^azurefoundry_/i, "")
             .replace(/^AI Foundry /i, "")
             .replace(/_/g, " ")
             .replace(/ Agent$/i, "");
-          
+
           if (friendlyName) {
-            // Update visual status
             setCurrentAgent(friendlyName);
-            
-            // Only announce each agent once per request
+
+            // Announce agent on first appearance — keep it brief and natural
             if (!announcedAgentsRef.current.has(friendlyName.toLowerCase())) {
               announcedAgentsRef.current.add(friendlyName.toLowerCase());
               logDebug("[VoiceRealtime] 🎯 Announcing agent:", friendlyName);
-              // Speak filler via Azure Voice Live TTS (out-of-band, won't corrupt conversation)
-              speakFillerViaAzure(`Calling the ${friendlyName} agent.`);
-            } else {
-              logDebug("[VoiceRealtime] Agent already announced, skipping:", friendlyName);
+              speakFillerViaAzure(`Contacting the ${friendlyName} agent.`);
+            } else if (activityType === "agent_complete") {
+              logDebug("[VoiceRealtime] ✅ Agent complete:", friendlyName);
+              speakFillerViaAzure(`${friendlyName} agent is done.`);
             }
           }
         }
@@ -301,7 +316,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         user_id: authenticatedUserId,  // Must match authenticated user
         session_id: currentSessionId,  // Session ID for agent lookup (e.g., sess_xxx)
         conversation_id: conversationIdOnly,  // Just the conversation ID, backend will combine with session_id
-        timeout: 120,
+        timeout: 600,  // 10 minutes - generous for multi-agent workflows
       };
       
       // Only include activated_workflow_ids if we have them (and no explicit workflow)
@@ -392,7 +407,19 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           setTimeout(() => {
             isPlayingRef.current = false;
             setIsSpeaking(false);
-            logDebug("[VoiceRealtime] 🔊 Playback complete, mic re-enabled");
+            // Auto-activate push-to-talk after greeting (one-time)
+            if (autoActivateAfterPlaybackRef.current) {
+              autoActivateAfterPlaybackRef.current = false;
+              // Clear any stale audio captured during greeting playback
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+              }
+              isTalkingRef.current = true;
+              setIsTalking(true);
+              logDebug("[VoiceRealtime] 🔊 Greeting complete, push-to-talk auto-activated");
+            } else {
+              logDebug("[VoiceRealtime] 🔊 Playback complete, mic re-enabled");
+            }
           }, 300);
         }
       };
@@ -440,7 +467,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           case "session.updated":
             logInfo("[VoiceRealtime] Session ready");
             setIsListening(true);
-            
+
             // Send a friendly greeting (only on session.created)
             if (msg.type === "session.created" && wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({
@@ -450,6 +477,22 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
                   instructions: "Say a brief, warm greeting like: 'Hey there! How can I help you today?' Keep it natural and friendly, just 1 sentence.",
                 }
               }));
+
+              // Auto-activate push-to-talk after greeting finishes or after timeout
+              autoActivateAfterPlaybackRef.current = true;
+              setTimeout(() => {
+                if (autoActivateAfterPlaybackRef.current) {
+                  autoActivateAfterPlaybackRef.current = false;
+                  // Clear any stale audio before activating
+                  if (wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+                  }
+                  isTalkingRef.current = true;
+                  setIsTalking(true);
+                  logDebug("[VoiceRealtime] 🎤 Push-to-talk auto-activated (timeout fallback)");
+                }
+              }, 3000);
+              logDebug("[VoiceRealtime] 🎤 Greeting sent, will auto-activate after playback");
             }
             break;
 
@@ -459,6 +502,12 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
 
           case "input_audio_buffer.speech_stopped":
             logDebug("[VoiceRealtime] 🎤 Speech stopped - VAD detected silence");
+            // Auto-end push-to-talk when VAD detects silence
+            if (isTalkingRef.current) {
+              isTalkingRef.current = false;
+              setIsTalking(false);
+              logDebug("[VoiceRealtime] 🎤 Push-to-talk auto-ended by VAD");
+            }
             break;
 
           case "input_audio_buffer.committed":
@@ -486,21 +535,30 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
               
               setIsProcessing(true);
               isProcessingRef.current = true;
+              setIsVoiceProcessing(true);
+              isResponseActiveRef.current = false; // Function call response is done, open the window for fillers
               fillerSpokenRef.current = false; // Reset filler flag for this request
               announcedAgentsRef.current.clear(); // Clear announced agents for new request
               setIsListening(false);
-              
+
               try {
                 const args = JSON.parse(msg.arguments || "{}");
                 logDebug("[VoiceRealtime] 📤 Calling /api/query with:", args.query || transcript);
                 const queryResult = await executeQuery(args.query || transcript);
-                
+
                 logDebug("[VoiceRealtime] 📥 Query result received:", queryResult?.substring(0, 200));
                 setResult(queryResult);
                 config.onResult?.(queryResult);
 
                 // Inject result back to Realtime API
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  // Cancel any in-progress filler announcement before sending real response
+                  if (isResponseActiveRef.current) {
+                    logDebug("[VoiceRealtime] Cancelling filler before real response");
+                    wsRef.current.send(JSON.stringify({ type: "response.cancel" }));
+                    isResponseActiveRef.current = false;
+                  }
+
                   logDebug("[VoiceRealtime] 📤 Sending function output to Realtime API");
                   // Send function output
                   wsRef.current.send(
@@ -525,6 +583,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
               } finally {
                 setIsProcessing(false);
                 isProcessingRef.current = false;
+                setIsVoiceProcessing(false);
                 setCurrentAgent(null);
               }
             }
@@ -561,9 +620,8 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             break;
 
           case "response.done":
-            logDebug("[VoiceRealtime] Response complete");
-            isResponseActiveRef.current = false;  // Allow new fillers
-            setIsListening(true);
+            logDebug("[VoiceRealtime] Response complete, isProcessing:", isProcessingRef.current);
+            isResponseActiveRef.current = false;  // Allow new filler announcements
             break;
 
           case "error":
@@ -601,8 +659,8 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
 
       let audioChunkCount = 0;
       processor.onaudioprocess = (e) => {
-        // Only send audio when NOT playing back (to avoid echo/feedback)
-        if (wsRef.current?.readyState === WebSocket.OPEN && !isPlayingRef.current) {
+        // Only send audio when push-to-talk is active and NOT playing back (to avoid echo/feedback)
+        if (wsRef.current?.readyState === WebSocket.OPEN && isTalkingRef.current && !isPlayingRef.current) {
           const inputData = e.inputBuffer.getChannelData(0);
           const downsampledData = downsampleBuffer(
             inputData,
@@ -660,6 +718,63 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     }
   }, []);
 
+  // Cancel any in-progress audio playback
+  const cancelPlayback = useCallback(() => {
+    audioQueueRef.current = [];
+    currentSourcesRef.current.forEach(source => {
+      try { source.stop(); } catch { /* already stopped */ }
+    });
+    currentSourcesRef.current = [];
+    isPlayingRef.current = false;
+    setIsSpeaking(false);
+    nextStartTimeRef.current = 0;
+  }, []);
+
+  // Push-to-talk: start recording
+  const startTalking = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    // Cancel any AI audio playback so user can speak
+    if (isPlayingRef.current) {
+      cancelPlayback();
+    }
+
+    // Cancel any in-progress filler announcement
+    if (isResponseActiveRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "response.cancel" }));
+      isResponseActiveRef.current = false;
+    }
+
+    // Clear stale audio from ambient noise
+    wsRef.current.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+
+    isTalkingRef.current = true;
+    setIsTalking(true);
+    logDebug("[VoiceRealtime] 🎤 Push-to-talk: START");
+  }, [cancelPlayback]);
+
+  // Push-to-talk: manually stop recording (VAD normally handles this automatically)
+  // Used as manual override or for interrupt mode
+  const stopTalking = useCallback((options?: { interruptMode?: boolean }) => {
+    if (!isTalkingRef.current) return;
+
+    isTalkingRef.current = false;
+    setIsTalking(false);
+    logDebug("[VoiceRealtime] 🎤 Push-to-talk: STOP (manual)", options?.interruptMode ? "(interrupt mode)" : "");
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      // Commit the recorded audio buffer and trigger response
+      wsRef.current.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+
+      if (!options?.interruptMode) {
+        // Normal manual stop: trigger AI response since we're bypassing VAD
+        wsRef.current.send(JSON.stringify({ type: "response.create" }));
+      }
+      // In interrupt mode: just commit for transcription, don't trigger response.
+      // The transcript will be routed through the interrupt system by voice-button.
+    }
+  }, []);
+
   // Start voice conversation
   const startConversation = useCallback(async () => {
     try {
@@ -699,20 +814,21 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           JSON.stringify({
             type: "session.update",
             session: {
-              instructions: `You are a helpful assistant. When the user asks you to do something, you MUST call the execute_query function with their request. After receiving the function result, summarize it conversationally and briefly.
+              instructions: `You are a helpful assistant. Respond in the same language the user speaks to you. When the user asks you to do something, you MUST call the execute_query function with their request. After receiving the function result, summarize it conversationally and briefly.
 
 IMPORTANT RULES:
-1. For ANY user request, call execute_query immediately
-2. Keep your spoken responses brief and natural
-3. Do not read long technical details - summarize them
-4. Be conversational and friendly`,
+1. Match the user's language - if they speak English, respond in English; if French, respond in French, etc.
+2. For ANY user request, call execute_query immediately
+3. Keep your spoken responses brief and natural
+4. Do not read long technical details - summarize them
+5. Be conversational and friendly`,
               modalities: ["text", "audio"],
               turn_detection: {
                 type: "server_vad",
-                threshold: 0.5,
+                threshold: 0.8,
                 prefix_padding_ms: 300,
-                silence_duration_ms: 500,
-              },
+                silence_duration_ms: 600,
+              },  // High threshold to ignore background noise; mic gated by push-to-talk
               input_audio_format: "pcm16",
               output_audio_format: "pcm16",
               input_audio_transcription: {
@@ -798,11 +914,14 @@ IMPORTANT RULES:
     pendingCallRef.current = null;
     fillerSpokenRef.current = false;
     isProcessingRef.current = false;
+    isTalkingRef.current = false;
 
     setIsConnected(false);
     setIsListening(false);
     setIsSpeaking(false);
     setIsProcessing(false);
+    setIsTalking(false);
+    setIsVoiceProcessing(false);
     setCurrentAgent(null);
   }, [disconnectBackendWebSocket, stopMicrophone]);
 
@@ -811,12 +930,16 @@ IMPORTANT RULES:
     isListening,
     isSpeaking,
     isProcessing,
+    isTalking,
+    isVoiceProcessing,
     currentAgent,
     transcript,
     result,
     error,
     startConversation,
     stopConversation,
+    startTalking,
+    stopTalking,
     updateContextId,
   };
 }
