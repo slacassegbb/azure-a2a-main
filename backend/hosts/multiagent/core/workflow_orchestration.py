@@ -1259,7 +1259,7 @@ Analyze the context and return your structured result."""
             for t in tasks_to_check:
                 desc = t.task_description if isinstance(t, PlannerTask) else t.get("task_description", "")
                 agent = t.recommended_agent if isinstance(t, PlannerTask) else t.get("recommended_agent", "")
-                action_lines.append(f"  → Agent: {agent}\n    Task: {desc[:200]}")
+                action_lines.append(f"  → Agent: {agent}\n    Task: {desc[:400]}")
 
             # Recent task history (failures, completed)
             history_lines = []
@@ -1294,10 +1294,13 @@ Analyze the context and return your structured result."""
                             "You are a workflow quality gate. Before a task is dispatched to an agent, you verify the plan is sound.\n"
                             "You do NOT plan — you only validate. Check:\n"
                             "1. Is the selected agent appropriate for this task?\n"
-                            "2. Does the task description contain enough context?\n"
-                            "3. Are we about to repeat a failed task without changes?\n"
-                            "4. Is there missing data from prior steps?\n\n"
-                            "Approve unless there is a CLEAR problem. Do not be overly cautious — most plans are fine.\n"
+                            "2. Are we about to repeat a previously failed task without any changes?\n\n"
+                            "IMPORTANT: Task descriptions that reference prior steps (e.g. 'use the SKU from step 2', "
+                            "'based on the supplier response from step 4') are CORRECT — all previous step outputs "
+                            "are automatically injected into the agent's context at dispatch time. "
+                            "NEVER flag these as missing context or truncated.\n\n"
+                            "Approve unless the agent selection is clearly wrong or the exact same task already failed. "
+                            "Do not be overly cautious — most plans are fine.\n"
                             "If disapproving, provide a specific suggested_fix."
                         ),
                     },
@@ -2592,6 +2595,8 @@ Analyze this request and decide the best approach."""
                         log_info(f"[HITL Gate] Agent mode: cleared pending tasks for re-planning")
 
         else:
+            # No existing plan found — starting fresh
+            log_info(f"[Agent Mode] No saved plan found for context_id={context_id} — starting fresh orchestration")
             # =====================================================================
             # LLM ORCHESTRATION PATH: All workflows go through the orchestrator
             # =====================================================================
@@ -3414,10 +3419,13 @@ Analyze the plan and determine the next step."""
                         if not task_agent or not task_desc:
                             continue
 
-                        # Strip "Use the X Agent" prefix that the LLM sometimes adds
+                        # Strip "Use the X Agent" prefix and "[Step X]" prefix that the LLM sometimes adds
                         clean_desc = re.sub(
                             r'^use\s+the\s+.+?\s+agent\s*', '', task_desc, flags=re.IGNORECASE
                         ).strip() or task_desc
+                        clean_desc = re.sub(
+                            r'^\[Step\s*\d+[a-z]?\]\s*', '', clean_desc, flags=re.IGNORECASE
+                        ).strip() or clean_desc
 
                         # Find the best matching workflow step
                         best_label = None
@@ -3435,16 +3443,19 @@ Analyze the plan and determine the next step."""
                                     best_label = label
                                     best_desc = ws["description"]
 
-                        if best_desc and len(best_desc) > len(task_desc):
-                            log_info(
-                                f"[Workflow Enforcement] Replacing truncated description "
-                                f"'{task_desc[:60]}' → '{best_desc[:80]}'"
-                            )
-                            if isinstance(task_dict, dict):
-                                task_dict["task_description"] = best_desc
-                            else:
-                                task_dict.task_description = best_desc
-                            _wf_steps[best_label]["matched"] = True
+                        if best_desc and best_label:
+                            # Prepend the canonical [Step N] label so the frontend shows the correct step number
+                            canonical_desc = f"[Step {best_label}] {best_desc}"
+                            if len(canonical_desc) > len(task_desc) or not task_desc.startswith(f"[Step {best_label}]"):
+                                log_info(
+                                    f"[Workflow Enforcement] Replacing description "
+                                    f"'{task_desc[:60]}' → '[Step {best_label}] {best_desc[:60]}'"
+                                )
+                                if isinstance(task_dict, dict):
+                                    task_dict["task_description"] = canonical_desc
+                                else:
+                                    task_dict.task_description = canonical_desc
+                                _wf_steps[best_label]["matched"] = True
 
                 # Log final task descriptions for debugging
                 for _ti, _td in enumerate(tasks_to_execute):
