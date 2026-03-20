@@ -3415,33 +3415,32 @@ Analyze the plan and determine the next step."""
 
                     # ── Special pass: force-inject HUMAN_INPUT_REQUIRED ──
                     # The planner often assigns agent=None for HITL steps because it
-                    # thinks "no agent is needed — just wait". This prevents the normal
-                    # enforcement from matching (agent check fails or substring mismatch).
-                    # Explicitly find any unmatched HUMAN_INPUT_REQUIRED workflow step and
-                    # bind it to any task that looks like a pause/wait step.
+                    # thinks "no agent is needed — just wait". Normal enforcement skips
+                    # tasks with no agent. Match None-agent tasks to unmatched
+                    # HUMAN_INPUT_REQUIRED workflow steps.
                     _hitl_wf_labels = [
                         label for label, ws in _wf_steps.items()
                         if "HUMAN_INPUT_REQUIRED" in ws["description"].upper()
                     ]
-                    _pause_keywords = {"wait", "pause", "supplier", "response", "input", "human", "user provide"}
                     for label in _hitl_wf_labels:
                         ws = _wf_steps[label]
                         if ws["matched"]:
                             continue
                         for task_dict in tasks_to_execute:
-                            td = (task_dict.get("task_description") or "").lower()
-                            td_words = set(re.findall(r'\w+', td))
-                            if td_words & _pause_keywords:
-                                canonical = f"[Step {label}] {ws['description']}"
-                                if isinstance(task_dict, dict):
-                                    task_dict["task_description"] = canonical
-                                    task_dict["recommended_agent"] = ws["agent"]
-                                else:
-                                    task_dict.task_description = canonical
-                                    task_dict.recommended_agent = ws["agent"]
-                                ws["matched"] = True
-                                log_info(f"[Workflow Enforcement] Force-matched HUMAN_INPUT_REQUIRED step {label} to task")
-                                break
+                            # Only intercept tasks with no agent assigned
+                            agent_val = (task_dict.get("recommended_agent") or "").strip()
+                            if agent_val:
+                                continue
+                            canonical = f"[Step {label}] {ws['description']}"
+                            if isinstance(task_dict, dict):
+                                task_dict["task_description"] = canonical
+                                task_dict["recommended_agent"] = ws["agent"]
+                            else:
+                                task_dict.task_description = canonical
+                                task_dict.recommended_agent = ws["agent"]
+                            ws["matched"] = True
+                            log_info(f"[Workflow Enforcement] Force-matched HUMAN_INPUT_REQUIRED step {label} to None-agent task")
+                            break
 
                     for task_dict in tasks_to_execute:
                         task_agent = (task_dict.get("recommended_agent") or "").strip().lower()
