@@ -90,17 +90,6 @@ def _build_skills():
             ],
         ),
         AgentSkill(
-            id='googlemaps_weather',
-            name='Google Maps Weather Lookup',
-            description="Get current weather conditions, hourly forecasts, and daily forecasts for any location worldwide.",
-            tags=['googlemaps', 'weather', 'forecast', 'temperature', 'conditions'],
-            examples=[
-                'What is the weather in Paris, France?',
-                'Will it rain tomorrow in Seattle?',
-                'Give me the 7-day forecast for Tokyo, Japan',
-            ],
-        ),
-        AgentSkill(
             id='googlemaps_routes',
             name='Google Maps Route Computing',
             description="Compute driving or walking routes between two locations with distance and estimated travel time.",
@@ -125,7 +114,7 @@ def _build_agent_card(host: str, port: int):
     resolved = host if host != "0.0.0.0" else DEFAULT_HOST
     return AgentCard(
         name='Google Maps Agent',
-        description="An intelligent Google Maps agent that searches for places, provides weather forecasts, and computes travel routes using Google Maps MCP tools.",
+        description="An intelligent Google Maps agent that searches for places and computes travel routes using Google Maps MCP tools.",
         url=resolve_agent_url(resolved, port),
         version='1.0.0',
         defaultInputModes=['text'],
@@ -240,7 +229,7 @@ async def launch_ui(host="0.0.0.0", ui_port=DEFAULT_UI_PORT, a2a_port=DEFAULT_PO
         gr.Button("Refresh", size="sm").click(get_pending_status, outputs=status, queue=False)
         gr.Timer(5).tick(get_pending_status, outputs=status)
         chatbot = gr.Chatbot(height=400, show_label=False, type="messages")
-        inp = gr.Textbox(placeholder="Ask about places, weather, or routes...", show_label=False)
+        inp = gr.Textbox(placeholder="Ask about places or routes...", show_label=False)
         gr.Button("Send", variant="primary").click(process_message, [inp, chatbot], [inp, chatbot, status])
         inp.submit(process_message, [inp, chatbot], [inp, chatbot, status])
         gr.Button("Reset", variant="secondary").click(lambda: (globals().update(ui_session_id=None), [])[1], outputs=chatbot, queue=False)

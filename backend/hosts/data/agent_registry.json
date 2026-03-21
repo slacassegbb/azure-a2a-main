@@ -257,7 +257,7 @@
     "name": "Classification and Triage Agent",
     "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
     "version": "1.0.0",
-    "url": "http://localhost:8001/",
+    "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -531,7 +531,7 @@
       {
         "id": "edit_presentation",
         "name": "Edit Presentation",
-        "description": "Edit existing PowerPoint presentations — update slides, add content, insert images, and reformat.",
+        "description": "Edit existing PowerPoint presentations \u2014 update slides, add content, insert images, and reformat.",
         "examples": null,
         "tags": [
           "powerpoint",
@@ -641,7 +641,7 @@
     "name": "Text Message Agent",
     "description": "A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Supports Human-in-the-Loop (HITL) for interactive SMS conversations. Send SMS messages, receive replies, and ask users questions that pause the workflow until they respond. Perfect for notifications, approvals, confirmations, and two-way SMS workflows.",
     "version": "1.1.0",
-    "url": "https://azurefoundry-twilio2.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:8016/",
     "defaultInputModes": [
       "text"
     ],
@@ -656,7 +656,12 @@
         "id": "send_sms",
         "name": "Send SMS Message",
         "description": "Send an SMS text message to a phone number via Twilio. Can receive message content from previous workflow steps and deliver it via SMS notification.",
-        "examples": null,
+        "examples": [
+          "Send SMS: Your account balance is $1,234.56",
+          "Text me a summary of the results",
+          "Send a notification via SMS",
+          "Message my phone with the workflow output"
+        ],
         "tags": [
           "sms",
           "text",
@@ -671,7 +676,13 @@
         "id": "receive_sms",
         "name": "Receive SMS Messages",
         "description": "Retrieve and read recent SMS messages received by this Twilio number. Check for user replies, monitor incoming messages, and retrieve conversation history.",
-        "examples": null,
+        "examples": [
+          "Check my SMS messages",
+          "Has anyone texted me?",
+          "Show me recent SMS replies",
+          "Read messages from +15147715943",
+          "Get the last 10 SMS messages"
+        ],
         "tags": [
           "sms",
           "text",
@@ -687,7 +698,13 @@
         "id": "twilio_ask",
         "name": "Ask User via SMS (HITL)",
         "description": "Send a question via SMS and wait for the user's response. Human-in-the-Loop (HITL) capability for interactive SMS conversations. The workflow will pause until the user replies via SMS.",
-        "examples": null,
+        "examples": [
+          "Ask the user to confirm: Do you want to proceed?",
+          "Request approval via SMS",
+          "Ask for user input before continuing",
+          "Get confirmation: Reply YES or NO",
+          "Ask the user: What is your order number?"
+        ],
         "tags": [
           "sms",
           "hitl",
@@ -703,7 +720,12 @@
         "id": "notify_user",
         "name": "User Notification",
         "description": "Notify a user via SMS with workflow results, alerts, or important updates. Ideal as the final step in a workflow to deliver results to users' phones.",
-        "examples": null,
+        "examples": [
+          "Notify me when the task is complete",
+          "Send the final results via text message",
+          "Alert the user with the summary",
+          "Deliver the workflow output by SMS"
+        ],
         "tags": [
           "notify",
           "alert",
@@ -987,7 +1009,7 @@
       {
         "id": "edit_spreadsheet",
         "name": "Edit Spreadsheet",
-        "description": "Edit existing Excel spreadsheets — add rows, update values, insert formulas, and reformat.",
+        "description": "Edit existing Excel spreadsheets \u2014 add rows, update values, insert formulas, and reformat.",
         "examples": null,
         "tags": [
           "excel",
@@ -1089,7 +1111,7 @@
   },
   {
     "name": "Google Maps Agent",
-    "description": "An intelligent Google Maps agent that searches for places, provides weather forecasts, and computes travel routes using Google Maps MCP tools.",
+    "description": "An intelligent Google Maps agent that searches for places and computes travel routes using Google Maps MCP tools.",
     "version": "1.0.0",
     "url": "http://localhost:9041/",
     "defaultInputModes": [
@@ -1114,19 +1136,6 @@
           "location",
           "restaurants",
           "businesses"
-        ]
-      },
-      {
-        "id": "googlemaps_weather",
-        "name": "Google Maps Weather Lookup",
-        "description": "Get current weather conditions, hourly forecasts, and daily forecasts for any location worldwide.",
-        "examples": null,
-        "tags": [
-          "googlemaps",
-          "weather",
-          "forecast",
-          "temperature",
-          "conditions"
         ]
       },
       {
@@ -1472,7 +1481,7 @@
       {
         "id": "edit_document",
         "name": "Edit Document",
-        "description": "Edit existing Word documents — update text, add sections, insert tables, and reformat.",
+        "description": "Edit existing Word documents \u2014 update text, add sections, insert tables, and reformat.",
         "examples": null,
         "tags": [
           "word",
@@ -1858,7 +1867,7 @@
       {
         "id": "edit_video",
         "name": "Edit Video",
-        "description": "Edit and transform video files — trim, resize, change speed, add overlays, subtitles, transitions, and convert formats.",
+        "description": "Edit and transform video files \u2014 trim, resize, change speed, add overlays, subtitles, transitions, and convert formats.",
         "examples": null,
         "tags": [
           "video",
@@ -1871,7 +1880,7 @@
       {
         "id": "edit_audio",
         "name": "Edit Audio",
-        "description": "Edit and transform audio files — convert formats, adjust bitrate/sample rate, remove silence, extract audio from video.",
+        "description": "Edit and transform audio files \u2014 convert formats, adjust bitrate/sample rate, remove silence, extract audio from video.",
         "examples": null,
         "tags": [
           "audio",
@@ -1979,7 +1988,7 @@
     "name": "AI Foundry Supplier Agent",
     "description": "An intelligent supplier agent that provides product catalog lookup, pricing, availability, lead times, and product recommendations from a PostgreSQL database.",
     "version": "1.0.0",
-    "url": "http://localhost:9046/",
+    "url": "https://azurefoundry-supplier.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -1994,11 +2003,7 @@
         "id": "supplier_product_lookup",
         "name": "Product Lookup",
         "description": "Search and find products by name, SKU, category, or manufacturer in the supplier catalog.",
-        "examples": [
-          "Find all bond paper products",
-          "Look up SKU FP-BOND-2024-001",
-          "What corrugated boxes do you have?"
-        ],
+        "examples": null,
         "tags": [
           "supplier",
           "product",
@@ -2011,11 +2016,7 @@
         "id": "supplier_pricing",
         "name": "Pricing & Availability",
         "description": "Check product pricing, bulk discount tiers, stock status, and availability.",
-        "examples": [
-          "What is the price for 500 reams of copy paper?",
-          "Is product X in stock?",
-          "Show bulk pricing for stretch film"
-        ],
+        "examples": null,
         "tags": [
           "supplier",
           "pricing",
@@ -2029,11 +2030,7 @@
         "id": "supplier_lead_time",
         "name": "Lead Time Query",
         "description": "Look up estimated delivery and lead times for products and manufacturers.",
-        "examples": [
-          "What is the lead time for Domtar bond paper?",
-          "Which products can ship within 3 days?",
-          "Compare lead times for packaging tape"
-        ],
+        "examples": null,
         "tags": [
           "supplier",
           "lead-time",
@@ -2046,11 +2043,7 @@
         "id": "supplier_recommendations",
         "name": "Product Recommendations",
         "description": "Find alternative or replacement products based on availability, lead time, price, or specifications.",
-        "examples": [
-          "Suggest alternatives for backordered item X",
-          "Find a cheaper replacement for 3M adhesive tape",
-          "What can I use instead of product Y?"
-        ],
+        "examples": null,
         "tags": [
           "supplier",
           "alternative",
@@ -2060,14 +2053,23 @@
         ]
       },
       {
+        "id": "supplier_update",
+        "name": "Update Supplier Data",
+        "description": "Update product lead times, stock status, or pricing in the supplier database when new information is received.",
+        "examples": null,
+        "tags": [
+          "supplier",
+          "update",
+          "lead-time",
+          "stock-status",
+          "database"
+        ]
+      },
+      {
         "id": "supplier_cross_sell",
         "name": "Cross-sell & Upsell",
         "description": "Discover complementary products, accessories, and premium alternatives for cross-selling and upselling.",
-        "examples": [
-          "What goes well with corrugated boxes?",
-          "Show me premium alternatives to standard copy paper",
-          "Suggest accessories for our label printer order"
-        ],
+        "examples": null,
         "tags": [
           "supplier",
           "cross-sell",
@@ -2081,10 +2083,7 @@
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": [
-          "I need to speak with a person",
-          "Connect me with a human agent"
-        ],
+        "examples": null,
         "tags": [
           "human-interaction",
           "escalation",
