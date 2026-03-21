@@ -5279,10 +5279,13 @@ WORKFLOW STEPS AND OUTPUTS:
                     # Persist agent response to chat history database
                     try:
                         persist_parts = _build_persist_parts(final_responses)
+                        log_info(f"[Plan Persist] persist_parts count: {len(persist_parts)}, final_responses types: {[type(r).__name__ for r in final_responses]}")
                         if persist_parts:
                             # Build metadata with workflow plan if available
                             message_metadata = {"type": "agent_response", "agentName": "foundry-host-agent"}
+                            log_info(f"[Plan Persist] Checking current_plan: {session_context.current_plan is not None if session_context else 'no session'}")
                             if session_context and session_context.current_plan:
+                                log_info(f"[Plan Persist] Plan found! Serializing...")
                                 try:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                     message_metadata["workflow_plan"] = plan_data

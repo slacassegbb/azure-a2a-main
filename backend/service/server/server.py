@@ -432,21 +432,56 @@ class ConversationServer:
 
         # Try in-memory first (active conversations)
         # Check both short UUID and session-prefixed format
+        in_memory_messages = None
         conversation = self.manager.get_conversation(conversation_id)
         if conversation and conversation.messages:
             log_info(f"[_list_messages] Found {len(conversation.messages)} messages in memory (exact)")
-            return ListMessageResponse(
-                result=self.cache_content(conversation.messages)
-            )
+            in_memory_messages = conversation.messages
 
         # Also check session-prefixed format in memory (messages are stored under user_3::uuid)
-        if not (conversation and conversation.messages):
+        if not in_memory_messages:
             for conv in self.manager.conversations:
                 if conv.conversation_id.endswith(f"::{conversation_id}") and conv.messages:
                     log_info(f"[_list_messages] Found {len(conv.messages)} messages in memory (prefixed)")
-                    return ListMessageResponse(
-                        result=self.cache_content(conv.messages)
-                    )
+                    in_memory_messages = conv.messages
+                    break
+
+        if in_memory_messages:
+            # Merge metadata from DB (workflow_plan etc.) into in-memory messages
+            # In-memory messages don't carry metadata, but persist_message stores it to DB
+            try:
+                db_messages = chat_history_service.get_messages(conversation_id)
+                if not db_messages:
+                    db_messages = chat_history_service.get_messages_by_short_id(conversation_id)
+                if db_messages:
+                    # Build lookup: map message content to metadata
+                    db_meta_by_role_idx = {}
+                    agent_idx = 0
+                    for dm in db_messages:
+                        if dm.get("role") == "agent" and dm.get("metadata"):
+                            meta = dm["metadata"]
+                            if isinstance(meta, str):
+                                import json as _json
+                                meta = _json.loads(meta)
+                            if meta and "workflow_plan" in meta:
+                                db_meta_by_role_idx[agent_idx] = meta
+                        if dm.get("role") == "agent":
+                            agent_idx += 1
+                    # Apply metadata to in-memory messages
+                    if db_meta_by_role_idx:
+                        agent_idx = 0
+                        for msg in in_memory_messages:
+                            if msg.role != Role.user:
+                                if agent_idx in db_meta_by_role_idx:
+                                    msg.metadata = db_meta_by_role_idx[agent_idx]
+                                    log_info(f"[_list_messages] Merged workflow_plan metadata from DB into in-memory message")
+                                agent_idx += 1
+            except Exception as e:
+                log_debug(f"[_list_messages] Could not merge DB metadata: {e}")
+
+            return ListMessageResponse(
+                result=self.cache_content(in_memory_messages)
+            )
 
         # Fall back to database for persisted conversations
         # Try exact match first, then suffix match (frontend sends short UUID,

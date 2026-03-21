@@ -4027,6 +4027,10 @@ Analyze the plan and determine the next step."""
         # Save the completed plan to session context so it gets persisted
         # in message metadata as workflow_plan (for history reconstruction)
         if plan is not None:
+            task_count = len(plan.tasks) if hasattr(plan, 'tasks') else 0
+            log_info(f"[Plan Persist] Saving completed plan to session_context.current_plan ({task_count} tasks)")
             session_context.current_plan = plan
+        else:
+            log_warning(f"[Plan Persist] plan is None — no plan to save")
 
         return all_task_outputs
