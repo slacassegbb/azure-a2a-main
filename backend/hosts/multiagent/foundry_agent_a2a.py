@@ -5299,6 +5299,12 @@ WORKFLOW STEPS AND OUTPUTS:
                     except Exception as e:
                         log_debug(f"[ChatHistory] Error persisting agent response: {e}")
 
+                    # Clear completed plan so the next message routes fresh
+                    # (Plan was already serialized into message_metadata above)
+                    if session_context and session_context.current_plan and not session_context.pending_input_agent:
+                        log_debug(f"[Plan Cleanup] Clearing completed plan from session context")
+                        session_context.current_plan = None
+
                     # =========================================================
                     # CONVERSATION HISTORY: Record workflow in Responses API
                     # =========================================================

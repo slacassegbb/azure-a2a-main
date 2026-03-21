@@ -2093,46 +2093,72 @@ Analyze this request and decide the best approach."""
                     "order": i,
                 })
 
-            # 3b. Append notification step if email or sms — but only if LLM didn't already include one
-            existing_agent_names = {s.agent_name.lower() for s in plan.steps}
-            if channel == "email":
-                has_email_step = any("email" in name for name in existing_agent_names)
-                if not has_email_step:
-                    notif_id = str(uuid.uuid4())
-                    email_agent_name = None
+            # 3b. Append notification step if needed — dynamically find the best agent
+            # by matching the channel against agent names, descriptions, and skills
+            # across ALL registered agents (not just session), since scheduled
+            # workflows execute later and need agents available at that time
+            if channel in ("email", "sms"):
+                existing_agent_names = {s.agent_name.lower() for s in plan.steps}
+                # Check if LLM already included a notification-capable agent
+                channel_keywords = {
+                    "email": ["email", "outlook", "gmail", "mail", "smtp"],
+                    "sms": ["sms", "twilio", "text message", "texting"],
+                }
+                keywords = channel_keywords.get(channel, [])
+                has_notif_step = any(
+                    any(kw in name for kw in keywords) for name in existing_agent_names
+                )
+
+                if not has_notif_step:
+                    # Search all sources: session agents + full registry
+                    all_registry_agents = self._load_agent_registry() if hasattr(self, '_load_agent_registry') else []
+                    notif_agent_name = None
+
+                    def _matches_channel(name: str, desc: str, skills: list) -> bool:
+                        """Check if agent matches the notification channel by name, description, or skills."""
+                        searchable = f"{name} {desc} {' '.join(s if isinstance(s, str) else s.get('name', '') + ' ' + s.get('id', '') for s in skills)}".lower()
+                        return any(kw in searchable for kw in keywords)
+
+                    # Search session agents first
                     for card in self.cards.values():
-                        if any(s.id == "email_send" for s in (card.skills or [])):
-                            email_agent_name = card.name
+                        skill_list = [{"name": s.name, "id": s.id} for s in (card.skills or [])]
+                        if _matches_channel(card.name, card.description, skill_list):
+                            notif_agent_name = card.name
                             break
-                    db_steps.append({
-                        "id": notif_id,
-                        "agentId": email_agent_name.lower().replace(" ", "-"),
-                        "agentName": email_agent_name,
-                        "agentColor": assign_color_for_agent(email_agent_name),
-                        "description": "Compose and send a detailed email report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive multi-paragraph message — do not compress into a short summary.",
-                        "x": 100,
-                        "y": 100 + (len(db_steps) * 120),
-                        "order": len(db_steps),
-                    })
-            elif channel == "sms":
-                has_sms_step = any("twilio" in name or "sms" in name for name in existing_agent_names)
-                if not has_sms_step:
-                    notif_id = str(uuid.uuid4())
-                    sms_agent_name = None
-                    for card in self.cards.values():
-                        if any(s.id == "send_sms" for s in (card.skills or [])):
-                            sms_agent_name = card.name
-                            break
-                    db_steps.append({
-                        "id": notif_id,
-                        "agentId": sms_agent_name.lower().replace(" ", "-"),
-                        "agentName": sms_agent_name,
-                        "agentColor": assign_color_for_agent(sms_agent_name),
-                        "description": "Compose and send a detailed SMS report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive message — do not compress into a short summary.",
-                        "x": 100,
-                        "y": 100 + (len(db_steps) * 120),
-                        "order": len(db_steps),
-                    })
+
+                    # Fallback: search full agent registry
+                    if not notif_agent_name:
+                        for agent_data in all_registry_agents:
+                            if _matches_channel(
+                                agent_data.get('name', ''),
+                                agent_data.get('description', ''),
+                                agent_data.get('skills', [])
+                            ):
+                                notif_agent_name = agent_data.get('name')
+                                break
+
+                    if not notif_agent_name:
+                        log_warning(f"[Scheduled Task] No {channel} agent found — skipping notification step")
+                    else:
+                        notif_id = str(uuid.uuid4())
+                        workflow_goal = plan.workflow_name or user_message[:100]
+                        notif_desc = (
+                            f"Send the user a {channel.upper()} message summarizing the results from the previous workflow steps. "
+                            f"Context: {workflow_goal}. "
+                            "Include all key findings and actionable details from the previous steps. "
+                            "Be concise but comprehensive — adapt the detail level to the content."
+                        )
+                        db_steps.append({
+                            "id": notif_id,
+                            "agentId": notif_agent_name.lower().replace(" ", "-"),
+                            "agentName": notif_agent_name,
+                            "agentColor": assign_color_for_agent(notif_agent_name),
+                            "description": notif_desc,
+                            "x": 100,
+                            "y": 100 + (len(db_steps) * 120),
+                            "order": len(db_steps),
+                        })
+                        log_info(f"[Scheduled Task] Appended {channel} notification step using '{notif_agent_name}'")
 
             # 3c. Build sequential connections
             db_connections = []
