@@ -221,11 +221,18 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           if (friendlyName) {
             setCurrentAgent(friendlyName);
 
-            // Announce agent on first appearance — keep it brief and natural
+            // Announce agent on first appearance with task description if available
+            const content = data.content || data.data?.content || "";
             if (!announcedAgentsRef.current.has(friendlyName.toLowerCase())) {
               announcedAgentsRef.current.add(friendlyName.toLowerCase());
               logDebug("[VoiceRealtime] 🎯 Announcing agent:", friendlyName);
-              speakFillerViaAzure(`Contacting the ${friendlyName} agent.`);
+              const workingOn = content.match(/Working on:\s*(.{10,80})/i)?.[1]
+                || content.match(/^Starting task:\s*(.{10,80})/i)?.[1];
+              if (workingOn) {
+                speakFillerViaAzure(`Contacting the ${friendlyName} agent. Working on: ${workingOn}`);
+              } else {
+                speakFillerViaAzure(`Contacting the ${friendlyName} agent.`);
+              }
             } else if (activityType === "agent_complete") {
               logDebug("[VoiceRealtime] ✅ Agent complete:", friendlyName);
               speakFillerViaAzure(`${friendlyName} agent is done.`);
@@ -843,13 +850,13 @@ CRITICAL RULES:
                   type: "function",
                   name: "execute_query",
                   description:
-                    "Execute any user request by sending it to the agent network. Use this for ALL user requests.",
+                    "Send the user's request to the agent network for execution. IMPORTANT: Pass the user's words EXACTLY as they said them. Do NOT rephrase, summarize, or interpret. Copy their transcript verbatim.",
                   parameters: {
                     type: "object",
                     properties: {
                       query: {
                         type: "string",
-                        description: "The user's request to execute",
+                        description: "The user's EXACT words, copied verbatim from their transcript. Do not rephrase.",
                       },
                     },
                     required: ["query"],

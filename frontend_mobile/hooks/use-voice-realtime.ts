@@ -138,10 +138,20 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           const friendly = agentName.replace(/^azurefoundry_/i, "").replace(/^AI Foundry /i, "").replace(/_/g, " ").replace(/ Agent$/i, "")
           if (friendly) {
             setCurrentAgent(friendly)
+            const activity = data.activityType || data.data?.activityType || ""
+            const content = data.content || data.data?.content || ""
+
             if (!announcedAgentsRef.current.has(friendly.toLowerCase())) {
               announcedAgentsRef.current.add(friendly.toLowerCase())
-              speakFillerViaAzure(`Contacting the ${friendly} agent.`)
-            } else if ((data.activityType || data.data?.activityType) === "agent_complete") {
+              // Speak the task description if available, otherwise just announce the agent
+              const workingOn = content.match(/Working on:\s*(.{10,80})/i)?.[1]
+                || content.match(/^Starting task:\s*(.{10,80})/i)?.[1]
+              if (workingOn) {
+                speakFillerViaAzure(`Contacting the ${friendly} agent. Working on: ${workingOn}`)
+              } else {
+                speakFillerViaAzure(`Contacting the ${friendly} agent.`)
+              }
+            } else if (activity === "agent_complete") {
               speakFillerViaAzure(`${friendly} agent is done.`)
             }
           }
@@ -441,8 +451,8 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             tools: [{
               type: "function",
               name: "execute_query",
-              description: "Execute any user request by sending it to the agent network.",
-              parameters: { type: "object", properties: { query: { type: "string", description: "The user's request" } }, required: ["query"] }
+              description: "Send the user's request to the agent network for execution. IMPORTANT: Pass the user's words EXACTLY as they said them. Do NOT rephrase, summarize, or interpret. Copy their transcript verbatim.",
+              parameters: { type: "object", properties: { query: { type: "string", description: "The user's EXACT words, copied verbatim from their transcript. Do not rephrase." } }, required: ["query"] }
             }],
             tool_choice: "auto",
           }
