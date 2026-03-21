@@ -1842,11 +1842,13 @@ Specialized agents that can handle specific tasks independently.
 ### 🎯 DECISION RULES (IN PRIORITY ORDER)
 
 **1. Choose "workflow"** when:
-- User's goal clearly matches ONE workflow's description or purpose
-- User explicitly mentions a workflow name (even if they also mention an agent)
-- The task requires the specific coordinated steps defined in a workflow
+- User explicitly mentions a workflow by name (e.g., "run the invoice workflow")
+- User's request covers the FULL scope of the workflow — not just a partial match
+- IMPORTANT: If the user asks for a SUBSET of what a workflow does, use single_agent or multi_agent instead. E.g., if a workflow "checks garden AND sends SMS report" but user only asks "check my garden", do NOT use the workflow — use single_agent.
+- Only match workflows when the user's intent clearly requires ALL the workflow steps
 - Example: "Run the invoice workflow" → workflow
 - Example: "Use QuickBooks to run the invoice workflow" → workflow (workflow name takes priority)
+- Example: "Check my garden" when a "Garden + SMS Report" workflow exists → single_agent (user didn't ask for SMS)
 
 **2. Choose "workflows_parallel"** when:
 - User's request matches TWO OR MORE workflows that should run SIMULTANEOUSLY
