@@ -1610,10 +1610,10 @@ Analyze the context and return your structured result."""
             previous_task_outputs=previous_task_outputs,
         )
         log_info(f"[Agent Mode] Structured prompt for '{recommended_agent}': {len(enhanced_task_message)} chars")
-        
+
         # File deduplication for multi-step workflows
         self._deduplicate_workflow_files(session_context)
-        
+
         # EXPLICIT FILE ROUTING: Extract file URIs from _latest_processed_parts
         file_uris = []
         if hasattr(session_context, '_latest_processed_parts'):

@@ -165,10 +165,33 @@ The user replied via SMS: "{user_message}"
 Please process this human response and continue the workflow accordingly."""
                 user_message = enhanced_message
             
+            # Extract file URIs from A2A message parts (images, docs from previous agents)
+            received_file_uris = []
+            for part in message_parts:
+                root_part = getattr(part, 'root', part)
+                if hasattr(root_part, 'file'):
+                    file_obj = root_part.file
+                    if hasattr(file_obj, 'uri') and file_obj.uri:
+                        uri = str(file_obj.uri)
+                        if uri.startswith(('http://', 'https://')):
+                            received_file_uris.append(uri)
+                            logger.info(f"📎 Received file URI from previous step: {uri[:80]}")
+                elif hasattr(root_part, 'data') and isinstance(getattr(root_part, 'data', None), dict):
+                    data = root_part.data
+                    if data.get('artifact-uri'):
+                        received_file_uris.append(data['artifact-uri'])
+                        logger.info(f"📎 Received artifact URI from previous step: {data['artifact-uri'][:80]}")
+
+            if received_file_uris:
+                logger.info(f"📎 Total {len(received_file_uris)} file URI(s) available for MMS")
+
             agent = await self._get_or_create_agent()
+            # Store received file URIs so the agent can auto-attach them to MMS
+            agent._received_file_uris = received_file_uris
+
             # Use force_new=True to create separate threads for parallel requests
             thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
-            
+
             # Use streaming to show tool calls in real-time
             responses = []
             tools_called = []

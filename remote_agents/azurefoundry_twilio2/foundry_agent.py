@@ -344,6 +344,11 @@ class FoundryTwilioAgent:
             client = self._get_twilio_client()
             recipient = to_number or self.twilio_default_to_number
 
+            # Auto-attach files from previous workflow steps if LLM didn't provide media_urls
+            if not media_urls and hasattr(self, '_received_file_uris') and self._received_file_uris:
+                media_urls = self._received_file_uris
+                logger.info(f"📎 Auto-attaching {len(media_urls)} file(s) from previous workflow steps as MMS")
+
             if not recipient:
                 return {
                     "success": False,
@@ -597,15 +602,13 @@ class FoundryTwilioAgent:
             "type": "function",
             "function": {
                 "name": "send_sms",
-                "description": """Send a text message (SMS) or multimedia message (MMS) via Twilio.
+                "description": """Send a text message via Twilio to notify a user. Images and files from previous workflow steps are automatically attached as MMS.
 
 Use this function to:
 - Send workflow results or summaries to a user's phone
 - Deliver notifications or alerts via text message
-- Send images, videos, or documents as MMS attachments
 - Confirm completed actions with a text message
 
-If media_urls are provided, the message is sent as MMS with the attached media.
 If no phone number is provided, the default configured number will be used.""",
                 "parameters": {
                     "type": "object",
@@ -617,11 +620,6 @@ If no phone number is provided, the default configured number will be used.""",
                         "to_number": {
                             "type": "string",
                             "description": "Optional recipient phone number in E.164 format (e.g., +15147715943). If not provided, uses the default configured number."
-                        },
-                        "media_urls": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Optional list of publicly accessible URLs to images, videos, or files to attach as MMS. URLs must be https:// and accessible by Twilio. Up to 10 attachments."
                         }
                     },
                     "required": ["message"],
@@ -755,7 +753,7 @@ NEVER respond with explanatory text unless a tool call fails.
 ## Your Capabilities
 You have THREE tools available:
 
-1. **send_sms**: Send a one-way SMS/MMS notification (fire and forget, no response expected). Include `media_urls` with image/video URLs to send as MMS.
+1. **send_sms**: Send a one-way SMS notification (fire and forget, no response expected). Images/files from previous workflow steps are auto-attached as MMS.
 2. **receive_sms**: Retrieve past SMS messages from the inbox
 3. **twilio_ask**: Send an SMS question and WAIT for the user to reply (Human-in-the-Loop, pauses workflow)
 
@@ -784,10 +782,6 @@ NEVER ask the user for a phone number. Just call the tool without `to_number` an
 ✅ Request: "Send 'Your balance is $100' to +15551234567"
 → Action: `send_sms(message="Your balance is $100", to_number="+15551234567")`
 → Reason: Explicit phone number provided
-
-✅ Request: "Send the garden report with the image"
-→ Action: `send_sms(message="Garden report: ...", media_urls=["https://blob.../garden.jpg"])`
-→ Reason: Has an image URL from previous step — attach as MMS
 
 ✅ Request: "Check for replies"
 → Action: `receive_sms()`

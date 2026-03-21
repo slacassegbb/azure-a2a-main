@@ -63,7 +63,12 @@ export function SchedulesTab() {
   }
 
   const handleRunNow = async (id: string) => {
-    await runScheduleNow(id, sessionId)
+    const ok = await runScheduleNow(id, sessionId)
+    if (ok) {
+      alert("Workflow triggered! Check your conversations for results.")
+    } else {
+      alert("Failed to run workflow. The run-now feature may not be available yet.")
+    }
     setTimeout(refresh, 2000)
   }
 

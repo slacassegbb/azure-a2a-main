@@ -2290,26 +2290,28 @@ def main():
         
         # Use the provided session_id or fall back to schedule's default
         effective_session_id = session_id if session_id else schedule.session_id
-        
+
         # Track start time for history
         start_time = time.time()
         started_at = datetime.utcnow().isoformat()
-        
-        # Use the existing workflow run logic
-        run_request = WorkflowRunRequest(
-            workflow_id=schedule.workflow_id,
-            workflow_name=schedule.workflow_name,
-            session_id=effective_session_id,
-            wait_for_completion=wait,  # Use the wait parameter
-            timeout=schedule.timeout
-        )
-        
-        result = await run_workflow(run_request)
-        
+
+        # Use the scheduler's workflow executor (same one used by cron jobs)
+        if not scheduler._workflow_executor:
+            raise HTTPException(status_code=500, detail="No workflow executor configured")
+
+        try:
+            result = await scheduler._workflow_executor(
+                workflow_name=schedule.workflow_name,
+                session_id=effective_session_id,
+                timeout=schedule.timeout
+            )
+        except Exception as e:
+            result = {"success": False, "error": str(e)}
+
         # Calculate execution time and store in history
         execution_time = time.time() - start_time
         completed_at = datetime.utcnow().isoformat()
-        
+
         # Store run in history
         scheduler._add_run_history(
             schedule_id=schedule_id,
@@ -2323,8 +2325,8 @@ def main():
             completed_at=completed_at,
             execution_time=execution_time
         )
-        
-        return result
+
+        return {"success": True, "message": f"Workflow '{schedule.workflow_name}' triggered", **result}
 
     # ==================== END SCHEDULER ENDPOINTS ====================
 
