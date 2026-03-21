@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   Calendar,
   Clock,
+  Loader2,
   Play,
   Trash,
   Trash2,
@@ -32,6 +33,7 @@ export function SchedulesTab() {
   const [schedules, setSchedules] = useState<ScheduledWorkflow[]>([])
   const [history, setHistory] = useState<RunHistoryItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [runningId, setRunningId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const sessionId = getOrCreateSessionId()
 
@@ -63,13 +65,19 @@ export function SchedulesTab() {
   }
 
   const handleRunNow = async (id: string) => {
-    const ok = await runScheduleNow(id, sessionId)
-    if (ok) {
-      alert("Workflow triggered! Check your conversations for results.")
-    } else {
-      alert("Failed to run workflow. The run-now feature may not be available yet.")
+    if (runningId) return
+    setRunningId(id)
+    try {
+      const ok = await runScheduleNow(id, sessionId)
+      if (!ok) {
+        alert("Failed to run workflow.")
+      }
+    } finally {
+      setTimeout(() => {
+        setRunningId(null)
+        refresh()
+      }, 3000)
     }
-    setTimeout(refresh, 2000)
   }
 
   const handleDeleteAll = async () => {
@@ -137,10 +145,11 @@ export function SchedulesTab() {
                   />
                   <button
                     onClick={() => handleRunNow(schedule.id)}
-                    className="p-1.5 text-muted-foreground hover:text-primary transition-colors"
-                    title="Run now"
+                    disabled={runningId !== null}
+                    className={`p-1.5 transition-colors ${runningId === schedule.id ? "text-primary animate-pulse" : "text-muted-foreground hover:text-primary"} ${runningId !== null && runningId !== schedule.id ? "opacity-30" : ""}`}
+                    title={runningId === schedule.id ? "Running..." : "Run now"}
                   >
-                    <Play className="h-4 w-4" />
+                    {runningId === schedule.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                   </button>
                   <button
                     onClick={() => setExpandedId(isExpanded ? null : schedule.id)}
