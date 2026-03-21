@@ -2752,6 +2752,23 @@ MULTI-AGENT STRATEGY:
 FAILURE HANDLING:
 - Consider failed tasks in planning
 - You can retry with modifications or try alternative agents/approaches
+- If an agent failed (rate limit, timeout, error) and the task involves retrieving publicly available information (prices, weather, news, facts), use WEB_SEARCH as a fallback
+
+### 🌐 WEB_SEARCH RULES
+WEB_SEARCH is a built-in web search tool (Bing). Follow these rules strictly:
+
+**WHEN TO USE WEB_SEARCH:**
+- No specialized agent exists for the task AND the information is publicly available on the web
+- A specialized agent FAILED (rate limit, error, timeout) AND the data can be found online as a fallback
+- Task requires real-time public information: weather, stock prices, news, exchange rates, sports scores, current events
+
+**WHEN NOT TO USE WEB_SEARCH:**
+- A specialized agent exists and is available — ALWAYS prefer the agent over web search
+- Task requires an ACTION (send email, check camera, create document, send SMS) — web search cannot perform actions
+- Task requires private/internal data (user's garden camera, company documents, personal files)
+- The previous reflection already noted that web search was tried and didn't return useful results — do NOT retry the same search
+
+**PRIORITY ORDER: Specialized Agent → WEB_SEARCH → Report inability**
 
 ### 🔄 TASK DECOMPOSITION PRINCIPLES
 - **Read ALL Agent Skills First**: Before creating any task, carefully read through the skill descriptions of ALL available agents to understand what each can provide.
@@ -3011,9 +3028,9 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 
                 available_agents.append(agent_info)
 
-            # Add built-in pseudo-agents only when the workflow uses them,
-            # so they don't confuse the planner for normal agent-routed steps
+            # Add built-in pseudo-agents
             workflow_upper = workflow.upper() if workflow else ""
+            # EVALUATE and QUERY only available in predefined workflows
             if '[EVALUATE]' in workflow_upper:
                 available_agents.append({
                     "name": "EVALUATE",
@@ -3024,11 +3041,12 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     "name": "QUERY",
                     "description": "Built-in host orchestrator capability. Analyzes previous workflow outputs and returns structured JSON results. Can also answer general knowledge questions. Set recommended_agent to 'QUERY'."
                 })
-            if '[WEB_SEARCH]' in workflow_upper:
-                available_agents.append({
-                    "name": "WEB_SEARCH",
-                    "description": "Built-in host orchestrator capability. Searches the web using Bing for current, real-time information (exchange rates, weather, news, prices). Set recommended_agent to 'WEB_SEARCH'."
-                })
+            # WEB_SEARCH is ALWAYS available — it's the fallback for real-time
+            # information when no specialized agent exists or when an agent fails
+            available_agents.append({
+                "name": "WEB_SEARCH",
+                "description": "Built-in web search (Bing). Use ONLY for real-time information retrieval (weather, stock prices, news, exchange rates, current events, factual lookups). Do NOT use for tasks that require actions (sending emails, checking cameras, creating documents). IMPORTANT: Always prefer a specialized agent if one matches the task — WEB_SEARCH is a fallback, not a first choice."
+            })
 
             # Debug: Log available agents count for troubleshooting
             agent_names = [a.get('name', 'Unknown') for a in available_agents]
