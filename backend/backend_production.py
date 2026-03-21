@@ -464,6 +464,14 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
     # Use scheduler_session_id for context to isolate from user's active session
     context_id = f"{scheduler_session_id}::{conversation_id}"
+
+    # Create conversation with workflow name as title (instead of default "Chat XXXX")
+    try:
+        from service.chat_history_service import create_conversation
+        create_conversation(conversation_id=conversation_id, session_id=scheduler_session_id, name=workflow.name)
+        log_debug(f"[SCHEDULER] Created conversation '{workflow.name}' (id={conversation_id})")
+    except Exception as e:
+        log_debug(f"[SCHEDULER] Could not pre-create conversation: {e}")
     
     log_debug(f"[SCHEDULER] Workflow text:\n{workflow_text}")
     log_debug(f"[SCHEDULER] Context ID: {context_id} (isolated from user session {session_id})")
