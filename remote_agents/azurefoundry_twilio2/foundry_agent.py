@@ -327,50 +327,60 @@ class FoundryTwilioAgent:
                 logger.warning(f"Failed to resolve user credentials: {e}")
         return self.twilio_default_to_number
     
-    def send_sms(self, message: str, to_number: Optional[str] = None) -> Dict:
+    def send_sms(self, message: str, to_number: Optional[str] = None,
+                 media_urls: Optional[List[str]] = None) -> Dict:
         """
-        Send an SMS message via Twilio.
-        
+        Send an SMS or MMS message via Twilio.
+
         Args:
-            message: The SMS message body
+            message: The message body
             to_number: Recipient phone number (uses default if not provided)
-            
+            media_urls: Optional list of publicly accessible media URLs to attach (sends as MMS)
+
         Returns:
             Dict with success status and details
         """
         try:
             client = self._get_twilio_client()
             recipient = to_number or self.twilio_default_to_number
-            
+
             if not recipient:
                 return {
                     "success": False,
                     "error": "No recipient phone number provided and no default configured"
                 }
-            
-            # Truncate message if too long for SMS (160 chars for single SMS)
+
             if len(message) > 1600:
                 message = message[:1597] + "..."
-                logger.warning("Message truncated to 1600 characters for SMS")
-            
-            msg = client.messages.create(
-                body=message,
-                from_=self.twilio_from_number,
-                to=recipient
-            )
-            
+                logger.warning("Message truncated to 1600 characters")
+
+            create_kwargs = {
+                'body': message,
+                'from_': self.twilio_from_number,
+                'to': recipient,
+            }
+
+            # Attach media URLs for MMS (Twilio allows up to 10)
+            if media_urls:
+                create_kwargs['media_url'] = media_urls[:10]
+                logger.info(f"📎 Sending MMS with {len(media_urls[:10])} media attachment(s)")
+
+            msg = client.messages.create(**create_kwargs)
+
             result = {
                 "success": True,
                 "message_sid": msg.sid,
                 "from": self.twilio_from_number,
                 "to": recipient,
                 "status": msg.status,
-                "body_length": len(message)
+                "body_length": len(message),
+                "media_count": len(media_urls) if media_urls else 0,
             }
-            
-            logger.info(f"✅ SMS sent successfully: SID={msg.sid}, To={recipient}")
+
+            msg_type = "MMS" if media_urls else "SMS"
+            logger.info(f"✅ {msg_type} sent successfully: SID={msg.sid}, To={recipient}")
             return result
-            
+
         except TwilioRestException as e:
             logger.error(f"❌ Twilio API error: {e}")
             return {
@@ -379,7 +389,7 @@ class FoundryTwilioAgent:
                 "error_code": e.code if hasattr(e, 'code') else None
             }
         except Exception as e:
-            logger.error(f"❌ Unexpected error sending SMS: {e}")
+            logger.error(f"❌ Unexpected error sending message: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -587,25 +597,31 @@ class FoundryTwilioAgent:
             "type": "function",
             "function": {
                 "name": "send_sms",
-                "description": """Send an SMS text message via Twilio to notify a user.
-                
+                "description": """Send a text message (SMS) or multimedia message (MMS) via Twilio.
+
 Use this function to:
 - Send workflow results or summaries to a user's phone
-- Deliver notifications or alerts via SMS
+- Deliver notifications or alerts via text message
+- Send images, videos, or documents as MMS attachments
 - Confirm completed actions with a text message
 
-The message should be clear and concise since SMS has character limits.
+If media_urls are provided, the message is sent as MMS with the attached media.
 If no phone number is provided, the default configured number will be used.""",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "message": {
                             "type": "string",
-                            "description": "The SMS message content to send. Should be concise and informative. Max ~1600 characters."
+                            "description": "The message content to send. Should be concise and informative. Max ~1600 characters."
                         },
                         "to_number": {
                             "type": "string",
                             "description": "Optional recipient phone number in E.164 format (e.g., +15147715943). If not provided, uses the default configured number."
+                        },
+                        "media_urls": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of publicly accessible URLs to images, videos, or files to attach as MMS. URLs must be https:// and accessible by Twilio. Up to 10 attachments."
                         }
                     },
                     "required": ["message"],
@@ -739,7 +755,7 @@ NEVER respond with explanatory text unless a tool call fails.
 ## Your Capabilities
 You have THREE tools available:
 
-1. **send_sms**: Send a one-way SMS notification (fire and forget, no response expected)
+1. **send_sms**: Send a one-way SMS/MMS notification (fire and forget, no response expected). Include `media_urls` with image/video URLs to send as MMS.
 2. **receive_sms**: Retrieve past SMS messages from the inbox
 3. **twilio_ask**: Send an SMS question and WAIT for the user to reply (Human-in-the-Loop, pauses workflow)
 
@@ -768,6 +784,10 @@ NEVER ask the user for a phone number. Just call the tool without `to_number` an
 ✅ Request: "Send 'Your balance is $100' to +15551234567"
 → Action: `send_sms(message="Your balance is $100", to_number="+15551234567")`
 → Reason: Explicit phone number provided
+
+✅ Request: "Send the garden report with the image"
+→ Action: `send_sms(message="Garden report: ...", media_urls=["https://blob.../garden.jpg"])`
+→ Reason: Has an image URL from previous step — attach as MMS
 
 ✅ Request: "Check for replies"
 → Action: `receive_sms()`
@@ -912,9 +932,11 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
                 else:
                     # Resolve recipient: explicit arg > user credentials > env var default
                     to_number = function_args.get("to_number") or await self._resolve_to_number()
+                    media_urls = function_args.get("media_urls")
                     result = self.send_sms(
                         message=sms_message,
-                        to_number=to_number
+                        to_number=to_number,
+                        media_urls=media_urls
                     )
                 tool_outputs.append(ToolOutput(
                     tool_call_id=tool_call.id,

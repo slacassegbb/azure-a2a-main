@@ -18,6 +18,7 @@ import {
   Calendar,
   Clock,
   Play,
+  Trash,
   Trash2,
   RefreshCw,
   CheckCircle2,
@@ -66,14 +67,28 @@ export function SchedulesTab() {
     setTimeout(refresh, 2000)
   }
 
+  const handleDeleteAll = async () => {
+    if (schedules.length === 0) return
+    if (!confirm(`Delete all ${schedules.length} scheduled workflows? This cannot be undone.`)) return
+    await Promise.all(schedules.map((s) => deleteSchedule(s.id)))
+    refresh()
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <h2 className="text-lg font-semibold">Scheduled Workflows</h2>
-        <button onClick={refresh} className="p-2 text-muted-foreground hover:text-foreground transition-colors">
-          <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-        </button>
+        <div className="flex items-center gap-1">
+          {schedules.length > 0 && (
+            <button onClick={handleDeleteAll} className="p-2 text-muted-foreground hover:text-red-500 transition-colors" title="Delete all">
+              <Trash className="h-4 w-4" />
+            </button>
+          )}
+          <button onClick={refresh} className="p-2 text-muted-foreground hover:text-foreground transition-colors">
+            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto scroll-smooth">
