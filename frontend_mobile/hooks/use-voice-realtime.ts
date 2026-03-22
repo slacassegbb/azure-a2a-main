@@ -189,6 +189,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         }
         if (activatedWorkflowIds?.length) body.activated_workflow_ids = activatedWorkflowIds
 
+        console.log("[voice-rtc] executeQuery:", { url: `${config.apiUrl}/api/query`, userId, session: sess, hasToken: !!token })
         const res = await fetch(`${config.apiUrl}/api/query`, {
           method: "POST",
           headers,
@@ -200,11 +201,14 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             const d = await res.json()
             detail = d.detail || d.message || d.error || detail
           } catch {}
+          console.error("[voice-rtc] executeQuery FAILED:", res.status, detail)
           throw new Error(detail)
         }
         const data = await res.json()
+        console.log("[voice-rtc] executeQuery SUCCESS:", data.result?.slice(0, 100))
         return data.result || "Task completed."
       } catch (err: any) {
+        console.error("[voice-rtc] executeQuery ERROR:", err.message)
         return `Sorry, error: ${err.message || "Query failed"}`
       }
     },
