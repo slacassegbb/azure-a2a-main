@@ -265,9 +265,12 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             break
 
           case "response.function_call_arguments.done":
-            if (msg.name === "execute_query" && pendingCallRef.current) {
-              const callId = pendingCallRef.current.call_id
+            console.log("[voice-rtc] FC DONE: name=", msg.name, "pending=", pendingCallRef.current, "call_id=", msg.call_id)
+            if (msg.name === "execute_query") {
+              // Use call_id from pendingCallRef or directly from the event
+              const callId = pendingCallRef.current?.call_id || msg.call_id
               pendingCallRef.current = null
+              if (!callId) break
               setIsProcessing(true)
               isProcessingRef.current = true
               setIsVoiceProcessing(true)
@@ -301,8 +304,10 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
 
           case "conversation.item.created":
           case "conversation.item.added":
+            console.log("[voice-rtc] ITEM:", msg.item?.type, msg.item?.call_id || "", JSON.stringify(msg.item || {}).slice(0, 200))
             if (msg.item?.type === "function_call") {
               pendingCallRef.current = { call_id: msg.item.call_id, item_id: msg.item.id }
+              console.log("[voice-rtc] PENDING SET:", pendingCallRef.current)
             }
             break
 
