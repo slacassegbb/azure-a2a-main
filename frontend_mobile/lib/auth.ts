@@ -4,7 +4,21 @@
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null
-  return localStorage.getItem('auth_token')
+  const token = localStorage.getItem('auth_token')
+  if (!token) return null
+
+  // Check if JWT is expired
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      // Token expired — clear it
+      localStorage.removeItem('auth_token')
+      localStorage.removeItem('user_info')
+      return null
+    }
+  } catch {}
+
+  return token
 }
 
 export function getAuthHeaders(): HeadersInit {
