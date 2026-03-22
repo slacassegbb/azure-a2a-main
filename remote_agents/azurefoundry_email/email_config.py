@@ -385,10 +385,14 @@ def get_emails(
         user_email = credentials["sender_email"]
         count = min(count, 200)  # Cap at 200 (Graph API supports up to 999)
 
-        # When filtering by subject client-side, fetch more candidates so we
-        # don't miss the target email just because a newer unread arrived first.
-        fetch_count = max(count * 10, 25) if subject_contains else count
-        fetch_count = min(fetch_count, 200)
+        # When filtering by subject/sender client-side, fetch more candidates so we
+        # don't miss the target email buried further in the inbox. Graph API supports
+        # up to 999 per page, so we can safely fetch more when filtering.
+        if subject_contains or from_address:
+            fetch_count = max(count * 10, 500)
+            fetch_count = min(fetch_count, 999)
+        else:
+            fetch_count = count
 
         # Build filter query
         filters = []
@@ -405,10 +409,19 @@ def get_emails(
         url = f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/{target_folder}/messages"
         params = {
             "$top": fetch_count,
-            "$orderby": "receivedDateTime desc",
             "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview,body,hasAttachments,toRecipients,ccRecipients,parentFolderId"
         }
-        
+
+        # Use $search for subject filtering — searches the entire folder server-side
+        # so we don't miss emails buried deep in the inbox. $search doesn't support
+        # $orderby, so we sort client-side when using it.
+        if subject_contains:
+            # Double-quote the phrase for exact matching in KQL
+            params["$search"] = f'"subject:{subject_contains}"'
+            logger.info(f"Using $search for subject filter: {params['$search']}")
+        else:
+            params["$orderby"] = "receivedDateTime desc"
+
         if filters:
             params["$filter"] = " and ".join(filters)
         
@@ -436,7 +449,11 @@ def get_emails(
         messages = data.get("value", [])
         
         logger.info(f"API returned {len(messages)} messages")
-        
+
+        # When $search was used, results aren't ordered — sort by date descending
+        if subject_contains and messages:
+            messages.sort(key=lambda m: m.get("receivedDateTime", ""), reverse=True)
+
         # Apply client-side filters for partial matches (Graph doesn't support contains on all fields)
         filtered_messages = []
         for msg in messages:
