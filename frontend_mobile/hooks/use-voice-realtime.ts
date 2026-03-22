@@ -440,19 +440,19 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         ws.send(JSON.stringify({
           type: "session.update",
           session: {
-            instructions: `You are a voice interface to an AI agent network. You NEVER answer questions yourself. You ALWAYS delegate to the agent network by calling execute_query.\n\nCRITICAL RULES:\n1. NEVER answer a question directly. ALWAYS call execute_query first, no matter how simple the question seems.\n2. After receiving the function result, summarize it conversationally and briefly. Do NOT call execute_query again after receiving a result.\n3. Match the user's language - if they speak English, respond in English; if French, respond in French, etc.\n4. Keep your spoken responses brief and natural.\n5. Do not read long technical details - summarize them.\n6. You have NO knowledge of your own. Every user request must go through execute_query.`,
+            instructions: `You are a voice-only dispatcher. You cannot answer questions. Your ONLY capability is calling execute_query.\n\nFor EVERY user message, call execute_query with their exact words. No exceptions.\nAfter receiving the result, summarize it briefly and conversationally.\nMatch the user's language. Keep responses short. Do not read technical details verbatim.\nNEVER respond without calling execute_query first. You have zero knowledge of your own.`,
             modalities: ["text", "audio"],
-            turn_detection: { type: "server_vad", threshold: 0.8, prefix_padding_ms: 300, silence_duration_ms: 600 },
+            turn_detection: { type: "semantic_vad", eagerness: "low" },
             input_audio_format: "pcm16",
             output_audio_format: "pcm16",
             input_audio_transcription: { model: "whisper-1" },
             voice: "alloy",
-            temperature: 0.6,
+            temperature: 0.5,
             tools: [{
               type: "function",
               name: "execute_query",
-              description: "Send the user's request to the agent network for execution. IMPORTANT: Pass the user's words EXACTLY as they said them. Do NOT rephrase, summarize, or interpret. Copy their transcript verbatim.",
-              parameters: { type: "object", properties: { query: { type: "string", description: "The user's EXACT words, copied verbatim from their transcript. Do not rephrase." } }, required: ["query"] }
+              description: "REQUIRED for every user message. Send the user's request to the agent network. Pass their words EXACTLY as spoken — do NOT rephrase, summarize, or interpret.",
+              parameters: { type: "object", strict: true, properties: { query: { type: "string", description: "The user's EXACT words, copied verbatim from their transcript." } }, required: ["query"], additionalProperties: false }
             }],
             tool_choice: "auto",
           }
