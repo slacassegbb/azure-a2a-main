@@ -92,7 +92,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     isResponseActiveRef.current = true
     sendEvent({
       type: "response.create",
-      response: { modalities: ["audio", "text"], instructions: `Say exactly this in a brief, natural way: "${text}"` },
+      response: { instructions: `Say exactly this in a brief, natural way: "${text}"` },
     })
   }, [sendEvent])
 
@@ -217,6 +217,15 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     async (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data)
+        if (msg.type === "conversation.item.input_audio_transcription.completed") {
+          console.log("[voice-rtc] TRANSCRIPT:", JSON.stringify(msg))
+        } else if (msg.type === "response.function_call_arguments.done") {
+          console.log("[voice-rtc] FUNCTION CALL:", JSON.stringify(msg))
+        } else if (msg.type === "error") {
+          console.log("[voice-rtc] ERROR:", JSON.stringify(msg.error))
+        } else {
+          console.log("[voice-rtc] event:", msg.type)
+        }
         switch (msg.type) {
           case "session.created":
           case "session.updated":
@@ -226,22 +235,12 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
               sendEvent({
                 type: "response.create",
                 response: {
-                  modalities: ["audio", "text"],
                   instructions:
                     "Say a brief, warm greeting like: 'Hey there! How can I help you today?' Keep it natural, just 1 sentence.",
                 },
               })
               autoActivateRef.current = true
-              // Fallback: auto-activate mic after 3s if greeting hasn't finished
-              setTimeout(() => {
-                if (autoActivateRef.current) {
-                  autoActivateRef.current = false
-                  sendEvent({ type: "input_audio_buffer.clear" })
-                  setMicEnabled(true)
-                  isTalkingRef.current = true
-                  setIsTalking(true)
-                }
-              }, 3000)
+              // Mic will be enabled when output_audio_buffer.stopped fires (greeting done)
             }
             break
 
@@ -251,6 +250,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
               setIsTalking(false)
               setMicEnabled(false) // Mute mic when user stops talking
             }
+            // WebRTC: server auto-commits and auto-creates response, no action needed
             break
 
           case "conversation.item.input_audio_transcription.completed":
@@ -260,7 +260,8 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
 
           case "response.created":
             setIsListening(false)
-            setMicEnabled(false) // Mute mic when AI starts responding
+            // Don't mute mic here — noise_reduction + echo cancellation handle it
+            // This allows barge-in (user can interrupt AI mid-speech)
             break
 
           case "response.function_call_arguments.done":
@@ -299,6 +300,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             break
 
           case "conversation.item.created":
+          case "conversation.item.added":
             if (msg.item?.type === "function_call") {
               pendingCallRef.current = { call_id: msg.item.call_id, item_id: msg.item.id }
             }
@@ -307,26 +309,26 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           // WebRTC-specific: audio buffer coordination events
           case "output_audio_buffer.started":
             setIsSpeaking(true)
-            setMicEnabled(false) // Extra safety: mute mic during AI audio output
+            // Mic stays on for barge-in — noise_reduction handles echo
             break
 
           case "output_audio_buffer.stopped":
             setIsSpeaking(false)
             setIsListening(true)
+            // Re-enable mic after AI finishes speaking, with delay for echo to dissipate
+            if (autoActivateRef.current) {
+              autoActivateRef.current = false
+              setTimeout(() => {
+                setMicEnabled(true)
+                isTalkingRef.current = true
+                setIsTalking(true)
+              }, 500)
+            }
             break
 
           case "response.done":
             isResponseActiveRef.current = false
-            setIsSpeaking(false)
-            setIsListening(true)
-            // Auto-activate mic after greeting finishes
-            if (autoActivateRef.current) {
-              autoActivateRef.current = false
-              sendEvent({ type: "input_audio_buffer.clear" })
-              setMicEnabled(true)
-              isTalkingRef.current = true
-              setIsTalking(true)
-            }
+            // Don't enable mic here — wait for output_audio_buffer.stopped
             break
 
           case "error":
@@ -377,7 +379,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       setIsTalking(false)
       setMicEnabled(false)
       if (dcRef.current?.readyState === "open") {
-        sendEvent({ type: "input_audio_buffer.commit" })
+        // WebRTC: no buffer to commit, just request response
         if (!options?.interruptMode) sendEvent({ type: "response.create" })
       }
     },
@@ -434,13 +436,18 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           JSON.stringify({
             type: "session.update",
             session: {
+              type: "realtime",
               instructions:
                 "You are a voice-only dispatcher. You cannot answer questions. Your ONLY capability is calling execute_query.\n\nFor EVERY user message, call execute_query with their exact words. No exceptions.\nAfter receiving the result, summarize it briefly and conversationally.\nMatch the user's language. Keep responses short. Do not read technical details verbatim.\nNEVER respond without calling execute_query first. You have zero knowledge of your own.",
-              modalities: ["text", "audio"],
-              turn_detection: { type: "semantic_vad", eagerness: "low" },
-              input_audio_transcription: { model: "whisper-1" },
-              voice: "alloy",
-              temperature: 0.5,
+              output_modalities: ["audio"],
+              audio: {
+                input: {
+                  transcription: { model: "whisper-1" },
+                  turn_detection: { type: "semantic_vad", eagerness: "low" },
+                  noise_reduction: { type: "near_field" },
+                },
+                output: { voice: "alloy" },
+              },
               tools: [
                 {
                   type: "function",

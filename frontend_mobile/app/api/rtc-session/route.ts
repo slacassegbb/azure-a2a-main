@@ -33,7 +33,8 @@ export async function POST(req: Request) {
     }
 
     const tokenData = await tokenRes.json()
-    const ephemeralToken = tokenData.client_secret?.value
+    // Azure returns { value: "ek_..." } directly (not nested under client_secret)
+    const ephemeralToken = tokenData.value || tokenData.client_secret?.value
     if (!ephemeralToken) {
       console.error("[rtc-session] No ephemeral token in response:", JSON.stringify(tokenData))
       throw new Error("No ephemeral token in response")
