@@ -1346,6 +1346,7 @@ Analyze the context and return your structured result."""
         workflow: Optional[str],
         workflow_goal: Optional[str],
         previous_task_outputs: Optional[List[str]],
+        original_user_query: Optional[str] = None,
     ) -> str:
         """Build a structured, well-crafted prompt for a remote agent.
 
@@ -1381,6 +1382,10 @@ Analyze the context and return your structured result."""
         # Strip the [Step X] prefix from the task text since we already stated it in Role
         clean_task = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc).strip()
         parts.append(f"## Your Task\n{clean_task}")
+
+        # ── SECTION: Original User Query ──
+        if original_user_query:
+            parts.append(f"## Original User Query\n{original_user_query}")
 
         # ── SECTION: Workflow Goal ──
         if workflow_goal:
@@ -1608,6 +1613,7 @@ Analyze the context and return your structured result."""
             workflow=workflow,
             workflow_goal=workflow_goal,
             previous_task_outputs=previous_task_outputs,
+            original_user_query=user_message,
         )
         log_info(f"[Agent Mode] Structured prompt for '{recommended_agent}': {len(enhanced_task_message)} chars")
 
