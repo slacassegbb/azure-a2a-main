@@ -102,7 +102,7 @@ class FoundryAgentExecutor(AgentExecutor):
             seen_tools = set()
 
             async for event in agent.run_conversation_stream(session_id, user_message, context_id=context_id):
-                if any(event.startswith(p) for p in ("Fetching", "Uploading", "Analyzing", "Scanning", "Could not")):
+                if any(event.startswith(p) for p in ("Fetching", "Uploading", "Analyzing", "Scanning", "Sending", "Irrigation", "Failed to trigger", "Could not", "Requesting", "Fresh photo", "Camera didn", "Updating", "Reading", "Light schedule")):
                     # Status updates during image processing
                     if event not in seen_tools:
                         seen_tools.add(event)
