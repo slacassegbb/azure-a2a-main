@@ -12,9 +12,11 @@ interface MobileVoiceButtonProps {
   onConversationCreated?: (id: string) => void
   onFirstMessage?: (conversationId: string, transcript: string) => void
   onVoiceStateChange?: (active: boolean) => void
+  onQueryStart?: () => void
+  compact?: boolean
 }
 
-export function MobileVoiceButton({ conversationId, onConversationCreated, onFirstMessage, onVoiceStateChange }: MobileVoiceButtonProps) {
+export function MobileVoiceButton({ conversationId, onConversationCreated, onFirstMessage, onVoiceStateChange, onQueryStart, compact }: MobileVoiceButtonProps) {
   const sessionId = getOrCreateSessionId()
   const [activeConvId, setActiveConvId] = useState(conversationId)
   const [activeContextId, setActiveContextId] = useState(
@@ -22,13 +24,6 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
   )
   const firstMessageSentRef = useRef(false)
   const isNewConvRef = useRef(false)
-
-  useEffect(() => {
-    if (conversationId) {
-      setActiveConvId(conversationId)
-      setActiveContextId(createContextId(conversationId))
-    }
-  }, [conversationId])
 
   const voice = useVoiceRealtime({
     apiUrl: API_BASE_URL,
@@ -42,6 +37,16 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
     },
   })
 
+  // Keep active IDs in sync when conversationId prop changes
+  useEffect(() => {
+    if (conversationId) {
+      setActiveConvId(conversationId)
+      const newCtx = createContextId(conversationId)
+      setActiveContextId(newCtx)
+      voice.updateContextId(newCtx)
+    }
+  }, [conversationId])
+
   // Notify parent of voice state changes
   const prevConnected = useRef(false)
   useEffect(() => {
@@ -51,11 +56,21 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
     }
   }, [voice.isConnected, onVoiceStateChange])
 
+  // Detect when talking stops (manual tap OR server-side VAD) → fire onQueryStart
+  const prevTalkingRef = useRef(false)
+  useEffect(() => {
+    if (prevTalkingRef.current && !voice.isTalking) {
+      // Talking just ended → query about to be processed
+      onQueryStart?.()
+    }
+    prevTalkingRef.current = voice.isTalking
+  }, [voice.isTalking, onQueryStart])
+
   const handleStart = useCallback(async () => {
     firstMessageSentRef.current = false
     isNewConvRef.current = false
 
-    // Create a new conversation if we don't have one
+    // Only create a new conversation if we don't already have one
     if (!conversationId) {
       const conv = await createConversation()
       if (conv) {
@@ -66,6 +81,12 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
         setActiveContextId(newCtx)
         onConversationCreated?.(conv.conversation_id)
       }
+    } else {
+      // Already in a conversation — make sure voice targets it
+      const currentCtx = createContextId(conversationId)
+      voice.updateContextId(currentCtx)
+      setActiveConvId(conversationId)
+      setActiveContextId(currentCtx)
     }
 
     voice.startConversation()
@@ -77,6 +98,7 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
       return
     }
     if (voice.isTalking) {
+      // User finished speaking → useEffect on isTalking will fire onQueryStart
       voice.stopTalking()
     } else {
       voice.startTalking()
@@ -100,14 +122,41 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
   const isActive = voice.isConnected
 
   const renderIcon = () => {
+    const size = compact ? "h-6 w-6" : "h-8 w-8"
     switch (state.icon) {
-      case "error": return <AlertTriangle className="h-8 w-8" />
-      case "talking": return <Mic className="h-8 w-8 animate-pulse" />
-      case "speaking": return <Volume2 className="h-8 w-8" />
-      case "processing": return <Loader2 className="h-8 w-8 animate-spin" />
-      case "ready": return <Mic className="h-8 w-8" />
-      default: return <Phone className="h-8 w-8" />
+      case "error": return <AlertTriangle className={size} />
+      case "talking": return <Mic className={`${size} animate-pulse`} />
+      case "speaking": return <Volume2 className={size} />
+      case "processing": return <Loader2 className={`${size} animate-spin`} />
+      case "ready": return <Mic className={size} />
+      default: return <Phone className={size} />
     }
+  }
+
+  if (compact) {
+    return (
+      <div className="flex flex-col items-center -mt-5">
+        {/* The circle button */}
+        <div className="relative">
+          {isActive && (
+            <span className={`absolute -inset-1 rounded-full ${state.color} opacity-20 animate-pulse`} />
+          )}
+          <button
+            onClick={handleClick}
+            className={`relative z-10 h-14 w-14 rounded-full ${state.color} text-white shadow-lg active:scale-95 transition-all duration-150 flex items-center justify-center ${isActive ? `ring-2 ${state.ring}` : ""}`}
+          >
+            {renderIcon()}
+          </button>
+        </div>
+
+        {/* Only show yellow agent-working text */}
+        {voice.currentAgent && (
+          <span className="mt-2 text-[10px] text-amber-500 animate-pulse font-medium leading-none whitespace-nowrap">
+            {voice.currentAgent} working…
+          </span>
+        )}
+      </div>
+    )
   }
 
   return (

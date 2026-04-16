@@ -12,6 +12,7 @@ interface ConversationDetailProps {
   conversationId: string
   onBack: () => void
   externalInferenceEvents?: StepEvent[]
+  queryGeneration?: number
 }
 
 function getMediaType(uri: string, mimeType?: string): "image" | "video" | "audio" | "document" | "unknown" {
@@ -81,12 +82,12 @@ function AttachmentRenderer({ att }: { att: { uri: string; name: string; mimeTyp
   }
 }
 
-export function ConversationDetail({ conversationId, onBack, externalInferenceEvents }: ConversationDetailProps) {
+export function ConversationDetail({ conversationId, onBack, externalInferenceEvents, queryGeneration }: ConversationDetailProps) {
   const [messages, setMessages] = useState<Message[]>([])
-  const [inferenceEvents, setInferenceEvents] = useState<StepEvent[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [activityCollapsed, setActivityCollapsed] = useState(false)
   const messageCountBeforeInferenceRef = useRef(0)
+  const prevEventCountRef = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const { subscribe, unsubscribe } = useEventHub()
 
@@ -96,12 +97,15 @@ export function ConversationDetail({ conversationId, onBack, externalInferenceEv
     }, 100)
   }, [])
 
+  // The parent (page.tsx) owns inference events. We just use externalInferenceEvents directly.
+  const liveEvents = externalInferenceEvents || []
+
   // Load messages on mount / conversation change
   useEffect(() => {
     setIsLoading(true)
-    setInferenceEvents([])
     setActivityCollapsed(false)
     messageCountBeforeInferenceRef.current = 0
+    prevEventCountRef.current = 0
     listMessages(conversationId).then((msgs) => {
       setMessages(msgs)
       setIsLoading(false)
@@ -109,15 +113,40 @@ export function ConversationDetail({ conversationId, onBack, externalInferenceEv
     })
   }, [conversationId, scrollToBottom])
 
-  // Subscribe to live events
+  // When queryGeneration bumps, snapshot current messages and reset collapse
+  useEffect(() => {
+    if (!queryGeneration) return
+    setActivityCollapsed(false)
+    prevEventCountRef.current = 0
+    listMessages(conversationId).then((msgs) => {
+      setMessages(msgs)
+      messageCountBeforeInferenceRef.current = msgs.length
+      scrollToBottom()
+    })
+  }, [queryGeneration, conversationId, scrollToBottom])
+
+  // When new external events arrive, snapshot messages on the first one and auto-scroll
+  useEffect(() => {
+    if (liveEvents.length === 0) return
+    if (prevEventCountRef.current === 0 && liveEvents.length > 0) {
+      // First event of this batch — fetch messages to capture user query
+      listMessages(conversationId).then((msgs) => {
+        setMessages(msgs)
+        messageCountBeforeInferenceRef.current = msgs.length
+        scrollToBottom()
+      })
+    }
+    prevEventCountRef.current = liveEvents.length
+    scrollToBottom()
+  }, [liveEvents.length, conversationId, scrollToBottom])
+
+  // Subscribe to message events only (for refreshing conversation when final response arrives)
   useEffect(() => {
     const handleMessage = (data: any) => {
       const msgConvId = data.conversationId || ""
       if (msgConvId === conversationId || msgConvId.includes(conversationId)) {
         listMessages(conversationId).then((msgs) => {
-          // If we had inference events and new messages arrived, the final response is here
-          // Auto-collapse the activity panel
-          if (inferenceEvents.length > 0 && msgs.length > messageCountBeforeInferenceRef.current) {
+          if (prevEventCountRef.current > 0 && msgs.length > messageCountBeforeInferenceRef.current) {
             setActivityCollapsed(true)
           }
           setMessages(msgs)
@@ -126,27 +155,11 @@ export function ConversationDetail({ conversationId, onBack, externalInferenceEv
       }
     }
 
-    const handleActivity = (data: any) => {
-      // On first inference event, fetch messages to capture the user query
-      // and record the count so we can split before/after
-      if (inferenceEvents.length === 0) {
-        listMessages(conversationId).then((msgs) => {
-          setMessages(msgs)
-          messageCountBeforeInferenceRef.current = msgs.length
-          scrollToBottom()
-        })
-      }
-      setInferenceEvents((prev) => [...prev, data])
-      scrollToBottom()
-    }
-
     subscribe("message", handleMessage)
-    subscribe("remote_agent_activity", handleActivity)
     return () => {
       unsubscribe("message", handleMessage)
-      unsubscribe("remote_agent_activity", handleActivity)
     }
-  }, [conversationId, subscribe, unsubscribe, scrollToBottom, inferenceEvents.length, messages.length])
+  }, [conversationId, subscribe, unsubscribe, scrollToBottom])
 
   const getMessageText = (msg: Message): string => {
     if (!msg.parts || !Array.isArray(msg.parts)) return ""
@@ -161,7 +174,7 @@ export function ConversationDetail({ conversationId, onBack, externalInferenceEv
   }
 
   // Combine local + external inference events
-  const allLiveEvents = [...inferenceEvents, ...(externalInferenceEvents || [])]
+  const allLiveEvents = liveEvents
 
   // Extract workflow plan steps from a message
   const getPlanSteps = (msg: Message): StepEvent[] => {

@@ -24,6 +24,7 @@ export default function MobilePage() {
   const [agentsLoaded, setAgentsLoaded] = useState(false)
   const [liveInferenceEvents, setLiveInferenceEvents] = useState<StepEvent[]>([])
   const [isVoiceActive, setIsVoiceActive] = useState(false)
+  const [queryGeneration, setQueryGeneration] = useState(0)
   const { isConnected, subscribe, unsubscribe } = useEventHub()
   const conversationsListRef = useRef<{ refresh: () => void } | null>(null)
 
@@ -122,6 +123,13 @@ export default function MobilePage() {
     }
   }, [])
 
+  const handleQueryStart = useCallback(() => {
+    // User finished speaking → query about to be sent
+    // Clear old inference events and bump generation so ConversationDetail resets
+    setLiveInferenceEvents([])
+    setQueryGeneration((g) => g + 1)
+  }, [])
+
   // Show loading while checking auth
   if (isCheckingAuth) {
     return (
@@ -167,6 +175,7 @@ export default function MobilePage() {
               conversationId={selectedConversation}
               onBack={() => setSelectedConversation(null)}
               externalInferenceEvents={liveInferenceEvents}
+              queryGeneration={queryGeneration}
             />
           ) : (
             <ConversationsList
@@ -180,30 +189,32 @@ export default function MobilePage() {
         )}
       </div>
 
-      {/* Voice button area - always visible */}
-      <div className="border-t bg-card/80 backdrop-blur-sm py-4 px-4">
-        <MobileVoiceButton
-          conversationId={selectedConversation}
-          onConversationCreated={handleConversationCreated}
-          onFirstMessage={handleFirstMessage}
-          onVoiceStateChange={handleVoiceStateChange}
-        />
-      </div>
-
       {/* Bottom tab bar */}
-      <div className="flex border-t bg-card safe-bottom">
+      <div className="flex items-end border-t bg-card safe-bottom">
         <button
           onClick={() => { setActiveTab("conversations"); setSelectedConversation(null) }}
-          className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-colors ${
+          className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${
             activeTab === "conversations" ? "text-primary" : "text-muted-foreground"
           }`}
         >
           <MessageSquare className="h-5 w-5" />
           <span className="text-[10px] font-medium">Chats</span>
         </button>
+
+        <div className="w-20 flex flex-col items-center">
+          <MobileVoiceButton
+            conversationId={selectedConversation}
+            onConversationCreated={handleConversationCreated}
+            onFirstMessage={handleFirstMessage}
+            onVoiceStateChange={handleVoiceStateChange}
+            onQueryStart={handleQueryStart}
+            compact
+          />
+        </div>
+
         <button
           onClick={() => setActiveTab("schedules")}
-          className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-colors ${
+          className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${
             activeTab === "schedules" ? "text-primary" : "text-muted-foreground"
           }`}
         >
