@@ -98,6 +98,142 @@ An AI-powered autonomous indoor garden using ESP32 IoT devices, Azure AI, and th
     Diablo Micro 5-0-1: Mixed into both B and C reservoirs as base supplement
 ```
 
+### Hardware Wiring Diagram
+
+```
+                         ┌─────────────────────────────────────┐
+                         │    ESP32-S3-WROOM (Freenove)        │
+                         │                                     │
+                         │  3.3V ●──┬──────────────────────┐   │
+                         │         │                      │   │
+                         │         ├── Moisture VCC (red)  │   │
+                         │         └── DS18B20 VCC (red)   │   │
+                         │                                     │
+                         │  5V   ●───── Relay Board VCC        │
+                         │                                     │
+                         │  GND  ●──┬── Moisture GND (black)   │
+                         │         ├── DS18B20 GND (black)     │
+                         │         ├── Relay Board GND         │
+                         │         └── MOSFET GND              │
+                         │         (all soldered together)     │
+                         │                                     │
+                         │  GPIO 4  ●───── Relay IN1 (pump)    │
+                         │  GPIO 5  ●───── Relay IN2 (valve A) │
+                         │  GPIO 7  ●───── Relay IN3 (valve B) │
+                         │  GPIO 8  ●───── Relay IN4 (valve C) │
+                         │                                     │
+                         │  GPIO 6  ●───── DS18B20 DATA (yel)  │
+                         │  GPIO 9  ●───── Moisture AOUT (yel) │
+                         │  GPIO 15 ●───── MOSFET SIG          │
+                         │                                     │
+                         └─────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │                CW-022 4-Channel Relay Board                  │
+    │                                                              │
+    │  VCC ← 5V    GND ← GND    IN1 ← GPIO 4                     │
+    │                            IN2 ← GPIO 5                     │
+    │                            IN3 ← GPIO 7                     │
+    │                            IN4 ← GPIO 8                     │
+    │                                                              │
+    │  CH1 (NO/COM) ──── 12V Pump ──── TalentCell 12V Battery     │
+    │  CH2 (NO/COM) ──── Valve A  ──── TalentCell 12V Battery     │
+    │  CH3 (NO/COM) ──── Valve B  ──── TalentCell 12V Battery     │
+    │  CH4 (NO/COM) ──── Valve C  ──── TalentCell 12V Battery     │
+    │                                                              │
+    │  All relays active LOW (ESP32 LOW = relay ON)                │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              LR7843 MOSFET Module (Light Dimming)            │
+    │                                                              │
+    │  SIG  ← GPIO 15 (PWM signal)                                │
+    │  VCC  ← (not connected — module is just a switch)           │
+    │  GND  ← ESP32 GND (soldered with others)                    │
+    │                                                              │
+    │  OUT+ ──── Mean Well DIM+ wire                               │
+    │  OUT- ──── Mean Well DIM- wire                               │
+    │                                                              │
+    │  PWM inverted: 0 = full bright, 255 = off                   │
+    │  MOSFET HIGH → pulls DIM to GND (dim)                       │
+    │  MOSFET LOW  → DIM floats to 10V (bright)                   │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              Capacitive Soil Moisture Sensor v1.2             │
+    │                                                              │
+    │  GND  (black)  ← ESP32 GND                                  │
+    │  VCC  (red)    ← ESP32 3.3V                                  │
+    │  AOUT (yellow) ← ESP32 GPIO 9                                │
+    │                                                              │
+    │  Push sensor fully into soil (past the white line)           │
+    │  ADC: 12-bit, ADC_2_5db (0-1.1V), raw 40=dry, 110=wet      │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              DS18B20 Temperature Sensor + PCB Adapter         │
+    │                                                              │
+    │  Probe wires → green screw terminal on PCB adapter:          │
+    │    Red    → VCC terminal                                     │
+    │    Black  → GND terminal                                     │
+    │    Yellow → DATA terminal                                    │
+    │                                                              │
+    │  PCB adapter pins → ESP32:                                   │
+    │    VCC  ← ESP32 3.3V                                         │
+    │    GND  ← ESP32 GND                                          │
+    │    S    ← ESP32 GPIO 6                                       │
+    │                                                              │
+    │  Pull-up resistor (4.7kΩ) built into PCB adapter             │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              12V Power (TalentCell Battery)                   │
+    │                                                              │
+    │  12V+ ──┬── Pump wire 1                                      │
+    │         ├── Valve A wire 1                                   │
+    │         ├── Valve B wire 1                                   │
+    │         └── Valve C wire 1                                   │
+    │         (all twisted/soldered to same terminal)              │
+    │                                                              │
+    │  12V- ──┬── Relay CH1 COM (pump return)                      │
+    │         ├── Relay CH2 COM (valve A return)                   │
+    │         ├── Relay CH3 COM (valve B return)                   │
+    │         └── Relay CH4 COM (valve C return)                   │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              Grow Light Power Chain                           │
+    │                                                              │
+    │  AC Wall ── KP401 (10.0.0.182) ── Mean Well XLG-100-H-AB    │
+    │                on/off only            │                      │
+    │                                       ├── AC→DC driver       │
+    │                                       ├── DIM+ ← MOSFET OUT+│
+    │                                       ├── DIM- ← MOSFET OUT-│
+    │                                       └── LED Panel Output   │
+    │                                            │                 │
+    │                                     1000W Full Spectrum LED  │
+    │                                     (Samsung LM301B)         │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              Fan Power Chain                                  │
+    │                                                              │
+    │  AC Wall ── KP405 (10.0.0.169) ── Fan                        │
+    │              on/off + dimmer                                  │
+    │              speed 1-100%                                    │
+    │              Kasa TCP:9999                                   │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │              ESP32-S3-EYE (Vision Camera)                    │
+    │                                                              │
+    │  USB-C power only — no external wiring                       │
+    │  OV2640 camera built-in                                      │
+    │  PSRAM for high-res JPEG capture                             │
+    │  WiFi → Azure Blob Storage (uploads photos)                  │
+    └──────────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Gardening Agent
