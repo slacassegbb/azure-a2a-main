@@ -41,12 +41,17 @@ CAPTURE_POLL_INTERVAL = 2  # seconds between checks
 MOISTURE_BLOB_NAME = "moisture-data.json"
 LIGHT_SCHEDULE_BLOB_NAME = "light-schedule.json"
 FAN_COMMAND_BLOB_NAME = "fan-command.json"
+VALVE_COMMAND_BLOB_NAME = "valve-command.json"
+GARDEN_LOG_BLOB_PREFIX = "garden-log"  # becomes garden-log-{user_id}.json
+MAX_LOG_ENTRIES = 50  # keep last ~6 days at 3-hour intervals
+VESYNC_EMAIL = "slacasseibm@gmail.com"
+VESYNC_PASSWORD = "Hip1hops!"
 DEFAULT_LIGHT_SCHEDULE = {
-    "sunrise_hour": 6,
-    "sunrise_ramp_min": 30,
+    "sunrise_hour": 5,
+    "sunrise_ramp_min": 90,
     "peak_brightness": 100,
     "sunset_hour": 20,
-    "sunset_ramp_min": 30,
+    "sunset_ramp_min": 90,
     "night_brightness": 0,
 }
 
@@ -437,12 +442,14 @@ class FoundryGardeningAgent:
         return request_id, current
 
     # ── Fan control ────────────────────────────────────────────────────
-    def _update_fan_command(self, state: bool, duration_min: int = 0) -> str:
+    def _update_fan_command(self, state: bool, duration_min: int = 0, speed: int = 100) -> str:
         """Write fan command to IoT blob. Returns request_id."""
         request_id = uuid.uuid4().hex[:8]
         command = {"request_id": request_id, "state": state}
         if duration_min > 0:
             command["duration_min"] = duration_min
+        if state and speed < 100:
+            command["speed"] = max(1, min(100, speed))
 
         client = self._get_iot_blob_client()
         container = _env("IOT_BLOB_CONTAINER", "garden-images")
@@ -452,8 +459,324 @@ class FoundryGardeningAgent:
             overwrite=True,
             content_settings=ContentSettings(content_type="application/json"),
         )
-        logger.info(f"Fan command sent: {request_id} state={state} duration={duration_min}min")
+        logger.info(f"Fan command sent: {request_id} state={state} speed={speed}% duration={duration_min}min")
         return request_id
+
+    def _trigger_valve_irrigation(self, valve: str, duration_seconds: int = 120) -> str:
+        """Write valve irrigation command to IoT blob. Returns request_id."""
+        request_id = uuid.uuid4().hex[:8]
+        command = {
+            "request_id": request_id,
+            "valve": valve.lower(),
+            "duration_seconds": duration_seconds,
+        }
+
+        client = self._get_iot_blob_client()
+        container = _env("IOT_BLOB_CONTAINER", "garden-images")
+        blob = client.get_blob_client(container=container, blob=VALVE_COMMAND_BLOB_NAME)
+        blob.upload_blob(
+            json.dumps(command),
+            overwrite=True,
+            content_settings=ContentSettings(content_type="application/json"),
+        )
+        valve_names = {"a": "plain water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+        logger.info(f"Valve command sent: {request_id} valve={valve} ({valve_names.get(valve, '?')}) duration={duration_seconds}s")
+        return request_id
+
+    # ── Garden memory log ──────────────────────────────────────────────
+    def _garden_log_blob_name(self, user_id: str) -> str:
+        """Get per-user garden log blob name."""
+        safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+        return f"{GARDEN_LOG_BLOB_PREFIX}-{safe_id}.json"
+
+    def _read_garden_log(self, user_id: str = "default") -> list:
+        """Read the garden activity log from blob storage."""
+        try:
+            client = self._get_iot_blob_client()
+            container = _env("IOT_BLOB_CONTAINER", "garden-images")
+            blob = client.get_blob_client(container=container, blob=self._garden_log_blob_name(user_id))
+            data = json.loads(blob.download_blob().readall())
+            return data.get("entries", [])
+        except Exception:
+            return []
+
+    def _append_garden_log(self, summary: str, user_id: str = "default"):
+        """Append an entry to the garden activity log."""
+        try:
+            entries = self._read_garden_log(user_id)
+            entry = {
+                "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "summary": summary,
+            }
+            entries.append(entry)
+            if len(entries) > MAX_LOG_ENTRIES:
+                entries = entries[-MAX_LOG_ENTRIES:]
+
+            client = self._get_iot_blob_client()
+            container = _env("IOT_BLOB_CONTAINER", "garden-images")
+            blob = client.get_blob_client(container=container, blob=self._garden_log_blob_name(user_id))
+            blob.upload_blob(
+                json.dumps({"entries": entries}),
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/json"),
+            )
+            logger.info(f"Garden log updated for {user_id}: {len(entries)} entries")
+        except Exception as e:
+            logger.warning(f"Failed to update garden log: {e}")
+
+    def _format_garden_log_for_context(self, entries: list) -> str:
+        """Format recent log entries as context for the LLM."""
+        if not entries:
+            return ""
+        recent = entries[-10:]  # last 10 entries (~30 hours)
+        lines = ["## Recent Garden Activity Log"]
+        for e in recent:
+            lines.append(f"- **{e.get('timestamp', '?')}**: {e.get('summary', '')}")
+        return "\n".join(lines)
+
+    # ── Timelapse video ────────────────────────────────────────────────
+    def _create_timelapse_video(self, date_from: str, date_to: str, fps: int = 4, context_id: str = "") -> Optional[str]:
+        """Create a timelapse MP4 from historical garden images. Returns blob URL."""
+        import cv2
+        import numpy as np
+        import tempfile
+
+        # Get all images in range
+        available = self._list_iot_images()
+        candidates = [
+            img['name'] for img in available
+            if img['name'][:10] >= date_from and img['name'][:10] <= date_to
+        ]
+        candidates.sort()  # chronological
+
+        if not candidates:
+            return None
+
+        # Pick 1 image per day at midday for daily timelapse, or all for short ranges
+        days = set(c[:10] for c in candidates)
+        if len(days) > 7:
+            # Long range: 1 per day at midday
+            by_day = {}
+            for name in candidates:
+                day = name[:10]
+                by_day.setdefault(day, []).append(name)
+            selected = []
+            for day in sorted(by_day.keys()):
+                day_images = by_day[day]
+                best = min(day_images, key=lambda n: abs(
+                    int(n[11:13]) * 60 + int(n[14:16]) - 720
+                ) if len(n) > 16 and n[11:13].isdigit() else 720)
+                selected.append(best)
+        else:
+            # Short range: use all images but cap at 100
+            selected = candidates[:100]
+
+        if len(selected) < 2:
+            return None
+
+        logger.info(f"Creating timelapse from {len(selected)} images ({date_from} to {date_to})")
+
+        # Download images and create video
+        frames = []
+        for blob_name in selected:
+            try:
+                img_bytes = self._fetch_iot_image_by_name(blob_name)
+                nparr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is not None:
+                    # Add date label to frame
+                    date_label = blob_name[:16].replace("_", " ")
+                    cv2.putText(frame, date_label, (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                    cv2.putText(frame, date_label, (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 1, cv2.LINE_AA)
+                    frames.append(frame)
+            except Exception as e:
+                logger.warning(f"Failed to load {blob_name}: {e}")
+
+        if len(frames) < 2:
+            return None
+
+        # Write frames as images, then use ffmpeg to create H.264 MP4
+        import subprocess
+        height, width = frames[0].shape[:2]
+        tmp_dir = tempfile.mkdtemp()
+        tmp_video = os.path.join(tmp_dir, "timelapse.mp4")
+
+        # Save frames as numbered images
+        for i, frame in enumerate(frames):
+            if frame.shape[:2] != (height, width):
+                frame = cv2.resize(frame, (width, height))
+            cv2.imwrite(os.path.join(tmp_dir, f"frame_{i:04d}.jpg"), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+
+        # Use ffmpeg to create H.264 MP4 (browser-compatible)
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(tmp_dir, "frame_%04d.jpg"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            tmp_video
+        ]
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=60)
+        if result.returncode != 0:
+            logger.warning(f"ffmpeg failed: {result.stderr.decode()[:200]}")
+            # Fallback: use OpenCV mp4v
+            tmp_video = os.path.join(tmp_dir, "timelapse_cv.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(tmp_video, fourcc, fps, (width, height))
+            for frame in frames:
+                if frame.shape[:2] != (height, width):
+                    frame = cv2.resize(frame, (width, height))
+                out.write(frame)
+            out.release()
+
+        # Read the video file
+        with open(tmp_video, 'rb') as f:
+            video_bytes = f.read()
+
+        # Cleanup temp files
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        logger.info(f"Timelapse video: {len(frames)} frames, {len(video_bytes)} bytes")
+
+        # Upload to blob storage
+        file_name = f"timelapse_{date_from}_to_{date_to}.mp4"
+        client = self._get_host_blob_client() or self._get_iot_blob_client()
+        host_container = _env("AZURE_BLOB_CONTAINER", "a2a-files")
+        file_id = uuid.uuid4().hex[:8]
+        if context_id and "::" in context_id:
+            session_id = context_id.split("::")[0]
+            blob_name = f"uploads/{session_id}/{file_id}/{file_name}"
+        else:
+            blob_name = f"gardening-agent/{file_id}/{file_name}"
+
+        container_client = client.get_container_client(host_container)
+        container_client.upload_blob(name=blob_name, data=video_bytes, overwrite=True)
+
+        # Generate SAS URL
+        url = self._generate_sas_url(client, host_container, blob_name)
+        if url:
+            self._latest_artifacts.append({
+                "artifact-uri": url,
+                "file-name": file_name,
+                "mime": "video/mp4",
+                "storage-type": "azure_blob",
+                "status": "stored",
+                "provider": "timelapse",
+                "local-path": "",
+                "file-size": len(video_bytes),
+            })
+        return url
+
+    # ── Humidifier control (Levoit LV600S via VeSync) ──────────────────
+    async def _get_humidifier(self):
+        """Connect to VeSync and return the humidifier device. Returns (None, None) on any failure."""
+        try:
+            from pyvesync import VeSync
+            manager = VeSync(
+                _env("VESYNC_EMAIL", VESYNC_EMAIL),
+                _env("VESYNC_PASSWORD", VESYNC_PASSWORD),
+                time_zone='America/New_York'
+            )
+            # Timeout the whole VeSync connection to avoid stalling the workflow
+            login_ok = await asyncio.wait_for(manager.login(), timeout=10)
+            if not login_ok:
+                logger.warning("VeSync login failed")
+                return None, None
+            await asyncio.wait_for(manager.get_devices(), timeout=10)
+            humidifiers = manager.devices.humidifiers
+            if not humidifiers:
+                logger.warning("No humidifiers found on VeSync account")
+                return None, None
+            return manager, humidifiers[0]
+        except asyncio.TimeoutError:
+            logger.warning("VeSync connection timed out — skipping humidifier")
+            return None, None
+        except Exception as e:
+            logger.warning(f"VeSync connection failed: {e} — skipping humidifier")
+            return None, None
+
+    async def _get_humidifier_status(self) -> dict:
+        """Read humidifier status including humidity level."""
+        manager, h = await self._get_humidifier()
+        if not h:
+            return None
+
+        await h.get_details()
+
+        # Extract data from raw response
+        result = {}
+        resp = h.last_response
+        if resp and hasattr(resp, 'response_data'):
+            data = resp.response_data
+            inner = data.get('result', {}).get('result', {})
+            result = {
+                "humidity": inner.get("humidity"),
+                "is_on": inner.get("enabled", False),
+                "mist_level": inner.get("mist_level"),
+                "mode": inner.get("mode"),
+                "water_lacks": inner.get("water_lacks", False),
+                "warm_enabled": inner.get("warm_enabled", False),
+                "warm_level": inner.get("warm_level", 0),
+                "target_humidity": inner.get("configuration", {}).get("auto_target_humidity"),
+            }
+
+        return result
+
+    async def _control_humidifier(self, action: str, target_humidity: int = None, mist_level: int = None) -> str:
+        """Control the humidifier. Actions: on, off, auto, status."""
+        manager, h = await self._get_humidifier()
+        if not h:
+            return "Humidifier not found or offline"
+
+        if action == "on":
+            await h.turn_on()
+            if mist_level:
+                try:
+                    await h.set_mist_level(mist_level)
+                except Exception:
+                    pass
+            return "Humidifier turned on" + (f" at mist level {mist_level}" if mist_level else "")
+        elif action == "off":
+            await h.turn_off()
+            return "Humidifier turned off"
+        elif action == "auto":
+            await h.turn_on()
+            # Try setting target humidity and auto mode — some model variants may not support all methods
+            results = []
+            if target_humidity:
+                try:
+                    await h.set_humidity(target_humidity)
+                    results.append(f"target set to {target_humidity}%")
+                except Exception as e:
+                    logger.warning(f"set_humidity failed: {e}")
+            try:
+                await h.set_auto_mode()
+                results.append("auto mode enabled")
+            except Exception as e:
+                logger.warning(f"set_auto_mode failed: {e}")
+                # Fallback: set manual mode with conservative mist level
+                try:
+                    await h.set_mist_level(mist_level or 3)
+                    results.append(f"manual mode, mist level {mist_level or 3}")
+                except Exception:
+                    pass
+            return "Humidifier: " + ", ".join(results) if results else "Humidifier turned on"
+        elif action == "status":
+            status = await self._get_humidifier_status()
+            if status:
+                return (f"Humidity: {status['humidity']}%, "
+                        f"On: {status['is_on']}, "
+                        f"Mist: {status['mist_level']}, "
+                        f"Mode: {status['mode']}, "
+                        f"Water low: {status['water_lacks']}, "
+                        f"Target: {status['target_humidity']}%")
+            return "Could not read humidifier status"
+
+        return f"Unknown action: {action}"
 
     # ── Artifact management ─────────────────────────────────────────────
     def pop_latest_artifacts(self) -> List[Dict[str, Any]]:
@@ -542,6 +865,7 @@ You help the user monitor and care for their garden by analyzing real-time image
 - **Soil Moisture Monitoring**: You can read the soil moisture sensor to check current moisture levels and recent trends. Use this data to advise whether watering is needed. Below 20% is dry and needs water, 20-50% is good, above 50% is very moist.
 - **Grow Light Control**: You can adjust the grow light schedule that runs autonomously on the IoT device. The schedule simulates natural sunlight with configurable sunrise/sunset times, ramp durations, and peak brightness. Adapt the schedule based on plant growth stage: seedlings need 14-16h light, vegetative growth 14-16h at full brightness, flowering plants need shorter days (12h) to trigger blooming. The lights continue following the schedule even if the internet goes down.
 - **Fan Control**: You can turn the grow room fan on/off for air circulation, ventilation, and humidity/temperature control. Use it when you see signs of high humidity (condensation, mold risk), when the air looks stagnant, or to cool plants during peak light hours. Can be set to run for a specific duration then auto-off.
+- **Humidity Control**: You can read room humidity from the Levoit humidifier sensor and control the humidifier. Be CONSERVATIVE with water — only turn on when humidity drops below 40%, set target to 50%, and turn off once reached. The tank is small. Always check humidity status before deciding to turn on. If water_lacks is true, alert the user to refill.
 - **Pest & Disease Identification**: Identify visible pests, fungal infections, nutrient deficiencies, and other issues.
 - **Seasonal Advice**: Provide planting schedules, pruning tips, fertilization recommendations based on what you see.
 - **General Gardening Knowledge**: Answer any gardening questions — composting, soil amendments, companion planting, etc.
@@ -604,7 +928,17 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "get_moisture_data",
-            "description": "Read the soil moisture sensor data from the IoT device. Returns the current moisture percentage and recent history (up to 48 hours). Call this when the user asks about soil moisture, whether they should water, or moisture trends.",
+            "description": "Read the soil moisture sensor data and air temperature from the IoT device. Returns the current moisture percentage, temperature in Celsius, and recent history (up to 48 hours). Call this when the user asks about soil moisture, temperature, whether they should water, or moisture/temperature trends.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+        {
+            "type": "function",
+            "name": "get_temperature",
+            "description": "Read the current air temperature from the DS18B20 sensor on the IoT device. Returns temperature in Celsius and Fahrenheit. Call this when the user asks about temperature, heat, or growing conditions.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -620,11 +954,11 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 "properties": {
                     "sunrise_hour": {
                         "type": "integer",
-                        "description": "Hour (0-23) for sunrise to begin. Default 6.",
+                        "description": "Hour (0-23) for sunrise to begin. Default 5.",
                     },
                     "sunrise_ramp_min": {
                         "type": "integer",
-                        "description": "Minutes to ramp from night to peak brightness. Default 30.",
+                        "description": "Minutes to ramp from night to peak brightness. Default 90 for natural sun simulation.",
                     },
                     "peak_brightness": {
                         "type": "integer",
@@ -636,7 +970,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     },
                     "sunset_ramp_min": {
                         "type": "integer",
-                        "description": "Minutes to ramp from peak to night brightness. Default 30.",
+                        "description": "Minutes to ramp from peak to night brightness. Default 90 for natural sun simulation.",
                     },
                     "night_brightness": {
                         "type": "integer",
@@ -649,7 +983,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_fan",
-            "description": "Control the grow room fan for air circulation. Use for ventilation, humidity control, cooling, or preventing mold. Optionally set a duration after which the fan auto-turns off.",
+            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Use for ventilation, humidity control, cooling, or preventing mold. Optionally set a duration after which the fan auto-turns off.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -657,12 +991,93 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                         "type": "boolean",
                         "description": "true to turn fan on, false to turn off",
                     },
+                    "speed": {
+                        "type": "integer",
+                        "description": "Fan speed 1-100%. Default 100. Lower speeds for gentle circulation, higher for cooling.",
+                    },
                     "duration_min": {
                         "type": "integer",
                         "description": "Optional minutes to run before auto-off. 0 or omitted = indefinite.",
                     },
                 },
                 "required": ["state"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "irrigate_with_valve",
+            "description": "Irrigate the garden using a specific valve/reservoir. Valve A = plain water (flushing, light watering). Valve B = Diablo Grow 2-1-6 (vegetative growth, nitrogen/potassium). Valve C = Diablo Bloom 0-5-1 (flowering, phosphorus). Choose the valve based on the plant's growth stage. Opens the valve and runs the pump for the specified duration.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "valve": {
+                        "type": "string",
+                        "enum": ["a", "b", "c"],
+                        "description": "Which valve/reservoir: a=plain water, b=grow nutrients, c=bloom nutrients",
+                    },
+                    "duration_seconds": {
+                        "type": "integer",
+                        "description": "How long to irrigate in seconds. Default 120 (2 minutes).",
+                    },
+                },
+                "required": ["valve"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "create_timelapse",
+            "description": "Create a time-lapse video from historical garden photos. Stitches timestamped IoT camera images into an MP4 video showing plant growth over time. Great for visualizing progress, tracking changes, and sharing garden updates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_from": {
+                        "type": "string",
+                        "description": "Start date in YYYY-MM-DD format",
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format",
+                    },
+                    "fps": {
+                        "type": "integer",
+                        "description": "Frames per second for the video. Default 4. Higher = faster playback.",
+                    },
+                },
+                "required": ["date_from", "date_to"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "control_humidifier",
+            "description": "Control the Levoit LV600S humidifier and read room humidity. Actions: 'status' to read current humidity level, 'on' to turn on, 'off' to turn off, 'auto' to set auto mode with target humidity. Be conservative — only turn on if humidity drops below 40%, target 50%, and turn off once reached. The tank is small so avoid running unnecessarily.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: 'status' (read humidity), 'on', 'off', or 'auto' (maintain target)",
+                        "enum": ["status", "on", "off", "auto"],
+                    },
+                    "target_humidity": {
+                        "type": "integer",
+                        "description": "Target humidity % for auto mode (30-80). Default 50. Be conservative.",
+                    },
+                    "mist_level": {
+                        "type": "integer",
+                        "description": "Mist level 1-9 for manual mode. Lower = less water usage. Default 3.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "clear_garden_log",
+            "description": "Clear the garden activity log / memory. Use when starting a new garden, new plants, or when the user asks to reset memory. This erases all previous observations and decisions.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     ]
@@ -733,8 +1148,12 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 raw = current.get("raw", "N/A")
                 ts = current.get("timestamp", "unknown")
                 irrigating = current.get("irrigating", False)
+                temp_c = current.get("temp_c")
 
                 result = f"Current soil moisture: {pct}% (raw: {raw}) as of {ts}."
+                if temp_c is not None and temp_c > -100:
+                    temp_f = temp_c * 9.0 / 5.0 + 32.0
+                    result += f" Air temperature: {temp_c:.1f}°C ({temp_f:.1f}°F)."
                 if irrigating:
                     result += " The irrigation system is currently running."
 
@@ -752,6 +1171,22 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
             except Exception as e:
                 return f"Failed to read moisture data: {e}", images_data
 
+        elif tool_name == "get_temperature":
+            try:
+                data = await asyncio.to_thread(self._fetch_moisture_data)
+                if not data:
+                    return "Temperature sensor data not available. The sensor may not be connected or hasn't uploaded yet.", images_data
+                current = data.get("current", {})
+                temp_c = current.get("temp_c")
+                ts = current.get("timestamp", "unknown")
+                if temp_c is not None and temp_c > -100:
+                    temp_f = temp_c * 9.0 / 5.0 + 32.0
+                    return f"Current air temperature: {temp_c:.1f}°C ({temp_f:.1f}°F) as of {ts}.", images_data
+                else:
+                    return "Temperature sensor is connected but no valid reading available yet.", images_data
+            except Exception as e:
+                return f"Failed to read temperature: {e}", images_data
+
         elif tool_name == "control_lights":
             try:
                 request_id, schedule = await asyncio.to_thread(self._update_light_schedule, tool_args)
@@ -766,13 +1201,76 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         elif tool_name == "control_fan":
             try:
                 state = tool_args.get("state", False)
+                speed = tool_args.get("speed", 100)
                 duration_min = tool_args.get("duration_min", 0)
-                request_id = await asyncio.to_thread(self._update_fan_command, state, duration_min)
+                request_id = await asyncio.to_thread(self._update_fan_command, state, duration_min, speed)
                 state_str = "ON" if state else "OFF"
+                speed_str = f" at {speed}% speed" if state and speed < 100 else ""
                 duration_str = f" for {duration_min} minutes" if duration_min > 0 else ""
-                return f"Fan command sent (request: {request_id}). Fan turned {state_str}{duration_str}.", images_data
+                return f"Fan command sent (request: {request_id}). Fan turned {state_str}{speed_str}{duration_str}.", images_data
             except Exception as e:
                 return f"Failed to control fan: {e}", images_data
+
+        elif tool_name == "irrigate_with_valve":
+            try:
+                valve = tool_args.get("valve", "a").lower()
+                duration_s = tool_args.get("duration_seconds", 120)
+                request_id = await asyncio.to_thread(self._trigger_valve_irrigation, valve, duration_s)
+                valve_names = {"a": "plain water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+                valve_name = valve_names.get(valve, valve)
+                return f"Valve irrigation started (request: {request_id}). Valve {valve.upper()} ({valve_name}) + pump running for {duration_s} seconds.", images_data
+            except Exception as e:
+                return f"Failed to trigger valve irrigation: {e}", images_data
+
+        elif tool_name == "create_timelapse":
+            try:
+                date_from = tool_args.get("date_from", "")
+                date_to = tool_args.get("date_to", "")
+                fps = tool_args.get("fps", 4)
+                url = await asyncio.to_thread(self._create_timelapse_video, date_from, date_to, fps, context_id)
+                if url:
+                    return f"Timelapse video created from {date_from} to {date_to}. Video URL: {url}", images_data
+                else:
+                    return f"Could not create timelapse — not enough images found between {date_from} and {date_to}.", images_data
+            except Exception as e:
+                return f"Failed to create timelapse: {e}", images_data
+
+        elif tool_name == "control_humidifier":
+            try:
+                action = tool_args.get("action", "status")
+                target = tool_args.get("target_humidity")
+                mist = tool_args.get("mist_level")
+                if action == "status":
+                    status = await self._get_humidifier_status()
+                    if status:
+                        water_warning = " ⚠️ WATER TANK LOW — needs refill!" if status.get("water_lacks") else ""
+                        return (f"Room humidity: {status['humidity']}%, "
+                                f"Humidifier: {'on' if status['is_on'] else 'off'}, "
+                                f"Mist level: {status['mist_level']}, "
+                                f"Mode: {status['mode']}, "
+                                f"Target: {status['target_humidity']}%"
+                                f"{water_warning}"), images_data
+                    return "Could not read humidifier status.", images_data
+                else:
+                    result = await self._control_humidifier(action, target, mist)
+                    return result, images_data
+            except Exception as e:
+                return f"Failed to control humidifier: {e}", images_data
+
+        elif tool_name == "clear_garden_log":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                client = self._get_iot_blob_client()
+                container = _env("IOT_BLOB_CONTAINER", "garden-images")
+                blob = client.get_blob_client(container=container, blob=self._garden_log_blob_name(user_id))
+                blob.upload_blob(
+                    json.dumps({"entries": []}),
+                    overwrite=True,
+                    content_settings=ContentSettings(content_type="application/json"),
+                )
+                return "Garden memory log cleared. Starting fresh.", images_data
+            except Exception as e:
+                return f"Failed to clear garden log: {e}", images_data
 
         return f"Unknown tool: {tool_name}", images_data
 
@@ -825,6 +1323,18 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         client = self._get_client()
         model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
         instructions = self._get_agent_instructions(vision_mode=False) + f"\nCurrent date/time: {datetime.datetime.now().astimezone().isoformat()}"
+
+        # Extract user_id from context_id for per-user memory
+        _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+
+        # Load garden activity log for context
+        try:
+            log_entries = await asyncio.to_thread(self._read_garden_log, _user_id)
+            log_context = self._format_garden_log_for_context(log_entries)
+            if log_context:
+                instructions += "\n\n" + log_context
+        except Exception as e:
+            logger.warning(f"Failed to load garden log: {e}")
 
         # Build conversation history for the loop
         conversation = [{"role": "user", "content": user_message}]
@@ -887,11 +1397,23 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 elif tool_name == "get_historical_images":
                     yield "Fetching historical images..."
                 elif tool_name == "get_moisture_data":
-                    yield "Reading soil moisture sensor..."
+                    yield "Reading soil moisture and temperature sensors..."
+                elif tool_name == "get_temperature":
+                    yield "Reading temperature sensor..."
                 elif tool_name == "control_lights":
                     yield "Updating light schedule..."
                 elif tool_name == "control_fan":
                     yield "Sending fan command..."
+                elif tool_name == "irrigate_with_valve":
+                    valve = tool_args.get("valve", "a")
+                    valve_names = {"a": "plain water", "b": "Grow nutrients", "c": "Bloom nutrients"}
+                    yield f"Opening valve {valve.upper()} ({valve_names.get(valve, valve)}) + pump..."
+                elif tool_name == "create_timelapse":
+                    yield "Creating timelapse video..."
+                elif tool_name == "control_humidifier":
+                    yield "Checking humidifier..."
+                elif tool_name == "clear_garden_log":
+                    yield "Clearing garden memory..."
 
                 result_text, images = await self._execute_tool_call(tool_name, tool_args, context_id)
                 all_images.extend(images)
@@ -935,6 +1457,10 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
             # If we already have text_output from the last round, yield it
             if text_output:
                 yield text_output
+                try:
+                    await asyncio.to_thread(self._append_garden_log, text_output[:500], _user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to append garden log: {e}")
                 return
             input_content = conversation  # pass full conversation
 
@@ -969,7 +1495,13 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                             self._track_usage(resp)
 
                 if text_chunks:
-                    yield "".join(text_chunks)
+                    final_text = "".join(text_chunks)
+                    yield final_text
+                    # Append summary to garden log
+                    try:
+                        await asyncio.to_thread(self._append_garden_log, final_text[:500], _user_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to append garden log: {e}")
                 else:
                     yield "I analyzed your garden but couldn't generate a response. Please try again."
                 return

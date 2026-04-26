@@ -3,9 +3,12 @@
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <ArduinoOTA.h>
 #include <time.h>
 #include "mbedtls/base64.h"
 #include "mbedtls/md.h"
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 // ===========================
 // Wi-Fi
@@ -26,7 +29,12 @@ const char* AZURE_API_VERSION  = "2023-11-03";
 // Relay / Irrigation
 // ===========================
 #define RELAY_PIN 4
+#define VALVE_A_PIN 5     // Relay CH2 — nitrogen valve
+#define VALVE_B_PIN 7     // Relay CH3 — phosphorus valve
+#define VALVE_C_PIN 8     // Relay CH4 — plain water valve
 #define MOISTURE_PIN 9
+#define LIGHT_DIM_PIN 15  // PWM output to Mean Well XLG-100 DIM+ wire
+#define TEMP_PIN 6        // DS18B20 OneWire data pin
 const unsigned long DEFAULT_IRRIGATION_MS = 120000; // 2-minute default
 const unsigned long MOISTURE_READ_INTERVAL_MS = 5000; // read every 5 seconds
 const unsigned long MOISTURE_UPLOAD_INTERVAL_MS = 300000; // upload to blob every 5 minutes
@@ -36,7 +44,7 @@ const int MAX_MOISTURE_HISTORY = 576; // 48 hours at 5-min intervals
 // ===========================
 // Grow Light (TP-Link Kasa KP405 — with dimming)
 // ===========================
-const char* KASA_LIGHT_IP = "";   // TODO: set when KP405 arrives (empty = skip light control)
+const char* KASA_LIGHT_IP = "10.0.0.182";   // KP401 — hard on/off for grow light power
 const int KASA_PORT = 9999;
 const char* LIGHT_SCHEDULE_BLOB = "light-schedule.json";
 const unsigned long LIGHT_SCHEDULE_POLL_MS = 60000;  // poll schedule blob every 60s
@@ -45,9 +53,15 @@ const unsigned long LIGHT_UPDATE_MS = 60000;         // update dimmer every 60s
 // ===========================
 // Fan (TP-Link Kasa KP401 — on/off)
 // ===========================
-const char* KASA_FAN_IP = "10.0.0.182";   // KP401 plugged into fan
+const char* KASA_FAN_IP = "10.0.0.169";   // KP405 — fan with dimmer speed control
 const char* FAN_COMMAND_BLOB = "fan-command.json";
 const unsigned long FAN_POLL_MS = 30000;  // poll fan command blob every 30s
+
+// ===========================
+// Valve irrigation
+// ===========================
+const char* VALVE_COMMAND_BLOB = "valve-command.json";
+const unsigned long VALVE_POLL_MS = 5000;  // poll every 5s (same as irrigation)
 
 // ===========================
 // Polling
@@ -80,6 +94,16 @@ String lastLightRequestId = "";
 unsigned long lastLightSchedulePollMs = 0;
 unsigned long lastLightUpdateMs = 0;
 int currentBrightness = -1;  // -1 = unknown, track to avoid redundant Kasa commands
+unsigned long lastKasaSuccessMs = 0;  // track last successful Kasa command
+const unsigned long KASA_RESEND_MS = 300000;  // re-send Kasa command every 5 min as safety net
+
+// Valve state
+String lastValveRequestId = "";
+unsigned long lastValvePollMs = 0;
+bool valveIrrigating = false;
+unsigned long valveIrrigationStartMs = 0;
+unsigned long valveIrrigationDurationMs = 0;
+int activeValvePin = -1;
 
 // Fan state
 String lastFanRequestId = "";
@@ -93,6 +117,13 @@ int schedPeakBrightness = 100;
 int schedSunsetHour = 20;
 int schedSunsetRampMin = 30;
 int schedNightBrightness = 0;
+
+// Temperature sensor (DS18B20)
+OneWire oneWire(TEMP_PIN);
+DallasTemperature tempSensor(&oneWire);
+float lastTempC = -127.0;  // -127 = no reading
+unsigned long lastTempReadMs = 0;
+const unsigned long TEMP_READ_INTERVAL_MS = 30000;  // read every 30s
 
 WebServer server(80);
 
@@ -344,25 +375,43 @@ bool kasaSend(const char* ip, const String& jsonCmd) {
   return true;
 }
 
-void kasaSetBrightness(int brightness) {
-  if (strlen(KASA_LIGHT_IP) == 0) return;  // no light device configured
-  if (brightness <= 0) {
-    kasaSend(KASA_LIGHT_IP, "{\"system\":{\"set_relay_state\":{\"state\":0}}}");
-    Serial.println("[LIGHT] Kasa OFF");
+bool setLightBrightness(int brightness) {
+  // PWM dimming via Mean Well XLG-100-H-AB through LR7843 MOSFET module
+  // Inverted: MOSFET HIGH pulls DIM low (dim), MOSFET LOW lets DIM float high (bright)
+  // KP401 cuts power at 0% for true darkness (Mean Well can't go below ~8%)
+  brightness = constrain(brightness, 0, 100);
+  bool kasaOk = true;
+
+  if (brightness == 0) {
+    analogWrite(LIGHT_DIM_PIN, 255);  // dim to minimum first
+    if (strlen(KASA_LIGHT_IP) > 0) {
+      kasaOk = kasaSend(KASA_LIGHT_IP, "{\"system\":{\"set_relay_state\":{\"state\":0}}}");
+    }
+    Serial.println("[LIGHT] OFF (KP401 power cut)" + String(kasaOk ? "" : " — KASA FAILED"));
   } else {
-    kasaSend(KASA_LIGHT_IP, "{\"system\":{\"set_relay_state\":{\"state\":1}}}");
-    delay(200);
-    String cmd = "{\"smartlife.iot.dimmer\":{\"set_brightness\":{\"brightness\":" + String(brightness) + "}}}";
-    kasaSend(KASA_LIGHT_IP, cmd);
-    Serial.println("[LIGHT] Kasa brightness: " + String(brightness) + "%");
+    // Ensure KP401 is on whenever brightness > 0
+    if (strlen(KASA_LIGHT_IP) > 0 && currentBrightness <= 0) {
+      kasaOk = kasaSend(KASA_LIGHT_IP, "{\"system\":{\"set_relay_state\":{\"state\":1}}}");
+      if (kasaOk) delay(500);
+    }
+    int pwmValue = map(brightness, 0, 100, 255, 0);  // inverted
+    analogWrite(LIGHT_DIM_PIN, pwmValue);
+    Serial.println("[LIGHT] PWM brightness: " + String(brightness) + "% (pwm=" + String(pwmValue) + ")");
   }
+  return kasaOk;
 }
 
-void kasaSetFan(bool on) {
+void kasaSetFan(bool on, int speed = 100) {
   if (strlen(KASA_FAN_IP) == 0) return;
   if (on) {
     kasaSend(KASA_FAN_IP, "{\"system\":{\"set_relay_state\":{\"state\":1}}}");
-    Serial.println("[FAN] Kasa ON");
+    if (speed < 100) {
+      delay(200);
+      kasaSend(KASA_FAN_IP, "{\"smartlife.iot.dimmer\":{\"set_brightness\":{\"brightness\":" + String(speed) + "}}}");
+      Serial.println("[FAN] Kasa ON at " + String(speed) + "%");
+    } else {
+      Serial.println("[FAN] Kasa ON at 100%");
+    }
   } else {
     kasaSend(KASA_FAN_IP, "{\"system\":{\"set_relay_state\":{\"state\":0}}}");
     Serial.println("[FAN] Kasa OFF");
@@ -413,10 +462,20 @@ void updateLights() {
   if (target < 0) return;  // clock not synced
   target = constrain(target, 0, 100);
 
-  // Only send Kasa command if brightness changed
-  if (target != currentBrightness) {
-    kasaSetBrightness(target);
-    currentBrightness = target;
+  // Send Kasa command if brightness changed OR every 5 min as safety net
+  bool needsResend = (millis() - lastKasaSuccessMs > KASA_RESEND_MS) && (target > 0 || currentBrightness != 0);
+  if (target != currentBrightness || needsResend) {
+    if (needsResend && target == currentBrightness) {
+      Serial.println("[LIGHT] Periodic re-send (safety net)");
+    }
+    bool ok = setLightBrightness(target);
+    if (ok) {
+      currentBrightness = target;
+      lastKasaSuccessMs = millis();
+    } else {
+      Serial.println("[LIGHT] Kasa failed — will retry next cycle");
+      currentBrightness = -1;  // force retry
+    }
   }
 }
 
@@ -527,15 +586,114 @@ void pollFanCommand() {
     }
   }
 
+  // Parse optional speed (1-100)
+  int speed = 100;
+  int spdStart = body.indexOf("\"speed\"");
+  if (spdStart >= 0) {
+    int spdColon = body.indexOf(':', spdStart);
+    if (spdColon >= 0) {
+      int numStart = spdColon + 1;
+      while (numStart < (int)body.length() && body[numStart] == ' ') numStart++;
+      String numStr = "";
+      while (numStart < (int)body.length() && body[numStart] >= '0' && body[numStart] <= '9') {
+        numStr += body[numStart++];
+      }
+      if (numStr.length() > 0) speed = constrain(numStr.toInt(), 1, 100);
+    }
+  }
+
   lastFanRequestId = requestId;
   prefs.putString("lastFanReq", requestId);
 
   Serial.println("[FAN] Command: " + String(stateOn ? "ON" : "OFF") +
+                 " speed=" + String(speed) + "%" +
                  (durationMin > 0 ? (" for " + String(durationMin) + "min") : ""));
 
-  kasaSetFan(stateOn);
+  kasaSetFan(stateOn, speed);
   fanOn = stateOn;
   fanAutoOffAtMs = (stateOn && durationMin > 0) ? (millis() + (unsigned long)durationMin * 60000UL) : 0;
+}
+
+// ------------------------------------------------------------------
+// Valve irrigation — open valve + pump for a duration
+// ------------------------------------------------------------------
+void checkValveTimer() {
+  if (!valveIrrigating) return;
+  if (millis() - valveIrrigationStartMs >= valveIrrigationDurationMs) {
+    relayOff();  // pump off
+    if (activeValvePin >= 0) digitalWrite(activeValvePin, HIGH);  // valve off
+    valveIrrigating = false;
+    activeValvePin = -1;
+    Serial.println("[VALVE] Irrigation complete");
+  }
+}
+
+void pollValveCommand() {
+  checkValveTimer();
+
+  if (millis() - lastValvePollMs < VALVE_POLL_MS) return;
+  lastValvePollMs = millis();
+
+  String body = downloadBlob(String(VALVE_COMMAND_BLOB));
+  if (body.length() < 5) return;
+
+  // Extract request_id
+  int idStart = body.indexOf("\"request_id\"");
+  if (idStart < 0) return;
+  int colonPos = body.indexOf(':', idStart);
+  int quoteStart = body.indexOf('"', colonPos + 1);
+  int quoteEnd = body.indexOf('"', quoteStart + 1);
+  if (quoteStart < 0 || quoteEnd < 0) return;
+  String requestId = body.substring(quoteStart + 1, quoteEnd);
+
+  if (requestId == lastValveRequestId) return;
+
+  lastValveRequestId = requestId;
+  prefs.putString("lastValveReq", requestId);
+
+  // Parse valve (a, b, c)
+  String valve = "a";
+  int vStart = body.indexOf("\"valve\"");
+  if (vStart >= 0) {
+    int vQuoteStart = body.indexOf('"', body.indexOf(':', vStart) + 1);
+    int vQuoteEnd = body.indexOf('"', vQuoteStart + 1);
+    if (vQuoteStart >= 0 && vQuoteEnd >= 0) {
+      valve = body.substring(vQuoteStart + 1, vQuoteEnd);
+      valve.toLowerCase();
+    }
+  }
+
+  // Parse duration_seconds (default 120)
+  int durationSec = 120;
+  int durStart = body.indexOf("\"duration_seconds\"");
+  if (durStart >= 0) {
+    int durColon = body.indexOf(':', durStart);
+    if (durColon >= 0) {
+      int numStart = durColon + 1;
+      while (numStart < (int)body.length() && body[numStart] == ' ') numStart++;
+      String numStr = "";
+      while (numStart < (int)body.length() && body[numStart] >= '0' && body[numStart] <= '9') {
+        numStr += body[numStart++];
+      }
+      if (numStr.length() > 0) durationSec = numStr.toInt();
+    }
+  }
+
+  // Map valve to pin
+  int valvePin = VALVE_A_PIN;
+  String valveName = "A (water)";
+  if (valve == "b") { valvePin = VALVE_B_PIN; valveName = "B (grow)"; }
+  else if (valve == "c") { valvePin = VALVE_C_PIN; valveName = "C (bloom)"; }
+
+  Serial.println("[VALVE] Opening " + valveName + " + pump for " + String(durationSec) + "s");
+
+  // Open valve and start pump
+  digitalWrite(valvePin, LOW);  // valve open (active LOW)
+  relayOn();  // pump on
+  valveIrrigating = true;
+  valveIrrigationStartMs = millis();
+  valveIrrigationDurationMs = (unsigned long)durationSec * 1000UL;
+  activeValvePin = valvePin;
 }
 
 // ------------------------------------------------------------------
@@ -548,7 +706,7 @@ void uploadMoistureData() {
   time_t now = time(nullptr);
   if (now < 1700000000) return;
 
-  int moisturePct = map(lastMoistureRaw, 290, 540, 0, 100);
+  int moisturePct = map(lastMoistureRaw, 40, 110, 0, 100);
   moisturePct = constrain(moisturePct, 0, 100);
 
   // Build current reading
@@ -598,6 +756,7 @@ void uploadMoistureData() {
   // Build final JSON
   String json = "{\"current\":{\"raw\":" + String(lastMoistureRaw)
               + ",\"pct\":" + String(moisturePct)
+              + ",\"temp_c\":" + String(lastTempC, 1)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + "},\"readings\":[" + readings + "]}";
@@ -742,26 +901,29 @@ void readMoisture() {
     delayMicroseconds(200);
   }
 
-  // Take 50 rapid readings
+  // Take 50 rapid readings, discard zeros (WiFi noise)
   long total = 0;
+  int validCount = 0;
   for (int i = 0; i < 50; i++) {
-    total += analogRead(MOISTURE_PIN);
+    int val = analogRead(MOISTURE_PIN);
+    if (val > 5) {  // ignore WiFi noise zeros
+      total += val;
+      validCount++;
+    }
     delayMicroseconds(500);
   }
-  int currentRaw = total / 50;
+  int currentRaw = (validCount > 0) ? (total / validCount) : lastMoistureRaw;
 
   // Exponential moving average (alpha = 0.15 — heavy smoothing)
   if (!moistureInitialized) {
     smoothedMoisture = currentRaw;
     moistureInitialized = true;
   } else {
-    smoothedMoisture = 0.3 * currentRaw + 0.7 * smoothedMoisture;
+    smoothedMoisture = 0.15 * currentRaw + 0.85 * smoothedMoisture;
   }
   lastMoistureRaw = (int)(smoothedMoisture + 0.5);
 
-  // Calibrated for GPIO 9 on this ESP32-S3 + Capacitive Sensor v1.2 @ ADC_2_5db
-  // ~10 dry air, ~20 moist soil, ~50 in water
-  int pct = map(lastMoistureRaw, 290, 540, 0, 100);
+  int pct = map(lastMoistureRaw, 40, 110, 0, 100);
   pct = constrain(pct, 0, 100);
   Serial.println("[MOISTURE] Raw: " + String(lastMoistureRaw) + "  (" + String(pct) + "%)");
 }
@@ -794,19 +956,39 @@ String htmlPage() {
     "<h1>Irrigation Controller</h1>"
     "<p>Status: " + state + "</p>"
     "<p>Last request: <code>" + (lastRequestId.length() ? lastRequestId : "none") + "</code></p>"
-    "<p>Moisture: <b>" + String(constrain(map(lastMoistureRaw, 290, 540, 0, 100), 0, 100)) + "%</b> (raw: " + String(lastMoistureRaw) + ")</p>"
+    "<p>Moisture: <b>" + String(constrain(map(lastMoistureRaw, 40, 110, 0, 100), 0, 100)) + "%</b> (raw: " + String(lastMoistureRaw) + ")</p>"
     "<p>Polling: <code>" + azureBlobUrl() + "</code></p>"
     "</body></html>";
 }
 
+void readTemperature() {
+  if (millis() - lastTempReadMs < TEMP_READ_INTERVAL_MS) return;
+  lastTempReadMs = millis();
+
+  tempSensor.requestTemperatures();
+  float temp = tempSensor.getTempCByIndex(0);
+  if (temp != DEVICE_DISCONNECTED_C) {
+    lastTempC = temp;
+    Serial.println("[TEMP] " + String(lastTempC, 1) + "°C / " + String(lastTempC * 9.0 / 5.0 + 32.0, 1) + "°F");
+  } else {
+    Serial.println("[TEMP] Sensor not found");
+  }
+}
+
 void handleRoot()   { server.send(200, "text/html", htmlPage()); }
 void handleStatus() {
-  int moisturePct = map(lastMoistureRaw, 290, 540, 0, 100);
+  int moisturePct = map(lastMoistureRaw, 40, 110, 0, 100);
   moisturePct = constrain(moisturePct, 0, 100);
+  // Take a quick instantaneous reading for diagnostics
+  int instantRaw = 0;
+  for (int i = 0; i < 10; i++) { instantRaw += analogRead(MOISTURE_PIN); delayMicroseconds(200); }
+  instantRaw /= 10;
   String json = "{\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + ",\"last_request_id\":\"" + lastRequestId + "\""
               + ",\"moisture_raw\":" + String(lastMoistureRaw)
-              + ",\"moisture_pct\":" + String(moisturePct) + "}";
+              + ",\"moisture_instant\":" + String(instantRaw)
+              + ",\"moisture_pct\":" + String(moisturePct)
+              + ",\"temp_c\":" + String(lastTempC, 1) + "}";
   server.send(200, "application/json", json);
 }
 
@@ -816,8 +998,16 @@ void handleStatus() {
 void setup() {
   Serial.begin(115200);
   pinMode(RELAY_PIN, OUTPUT);
+  pinMode(VALVE_A_PIN, OUTPUT);
+  digitalWrite(VALVE_A_PIN, HIGH);  // Relay off (active LOW)
+  pinMode(VALVE_B_PIN, OUTPUT);
+  digitalWrite(VALVE_B_PIN, HIGH);
+  pinMode(VALVE_C_PIN, OUTPUT);
+  digitalWrite(VALVE_C_PIN, HIGH);
+  pinMode(LIGHT_DIM_PIN, OUTPUT);
+  analogWrite(LIGHT_DIM_PIN, 0);  // Start at full brightness (inverted: 0 = full)
   // Don't set pinMode for ADC pin — analogRead handles it
-  analogSetPinAttenuation(MOISTURE_PIN, ADC_2_5db);  // 0-2.2V range — best results with 3.3V sensor
+  analogSetPinAttenuation(MOISTURE_PIN, ADC_2_5db);  // 0-1.1V range
   analogReadResolution(12);        // Force 12-bit (0-4095)
   relayOff();
 
@@ -834,17 +1024,73 @@ void setup() {
 
   server.on("/", handleRoot);
   server.on("/status", handleStatus);
+  server.on("/valve-open", []() {
+    String v = server.hasArg("v") ? server.arg("v") : "a";
+    int pin = v == "b" ? VALVE_B_PIN : v == "c" ? VALVE_C_PIN : VALVE_A_PIN;
+    digitalWrite(pin, LOW);
+    server.send(200, "text/plain", "Valve " + v + " OPEN. Hit /valve-close to close.");
+    Serial.println("[VALVE] " + v + " opened");
+  });
+  server.on("/valve-close", []() {
+    digitalWrite(VALVE_A_PIN, HIGH);
+    digitalWrite(VALVE_B_PIN, HIGH);
+    digitalWrite(VALVE_C_PIN, HIGH);
+    server.send(200, "text/plain", "All valves closed.");
+    Serial.println("[VALVE] All closed");
+  });
+  server.on("/test-valve-a", []() {
+    int secs = server.hasArg("s") ? server.arg("s").toInt() : 2;
+    server.send(200, "text/plain", "Valve A + Pump ON for " + String(secs) + " seconds...");
+    digitalWrite(VALVE_A_PIN, LOW);
+    relayOn();  // pump
+    delay(secs * 1000);
+    relayOff();
+    digitalWrite(VALVE_A_PIN, HIGH);
+    Serial.println("[VALVE] Test: A + pump for " + String(secs) + "s");
+  });
+  server.on("/test-valve-b", []() {
+    int secs = server.hasArg("s") ? server.arg("s").toInt() : 2;
+    server.send(200, "text/plain", "Valve B + Pump ON for " + String(secs) + " seconds...");
+    digitalWrite(VALVE_B_PIN, LOW);
+    relayOn();
+    delay(secs * 1000);
+    relayOff();
+    digitalWrite(VALVE_B_PIN, HIGH);
+    Serial.println("[VALVE] Test: B + pump for " + String(secs) + "s");
+  });
+  server.on("/test-valve-c", []() {
+    int secs = server.hasArg("s") ? server.arg("s").toInt() : 2;
+    server.send(200, "text/plain", "Valve C + Pump ON for " + String(secs) + " seconds...");
+    digitalWrite(VALVE_C_PIN, LOW);
+    relayOn();
+    delay(secs * 1000);
+    relayOff();
+    digitalWrite(VALVE_C_PIN, HIGH);
+    Serial.println("[VALVE] Test: C + pump for " + String(secs) + "s");
+  });
   server.begin();
 
   lastLightRequestId = prefs.getString("lastLightReq", "");
   Serial.println("Restored lastLightRequestId: " + (lastLightRequestId.length() ? lastLightRequestId : "(none)"));
   lastFanRequestId = prefs.getString("lastFanReq", "");
   Serial.println("Restored lastFanRequestId: " + (lastFanRequestId.length() ? lastFanRequestId : "(none)"));
+  lastValveRequestId = prefs.getString("lastValveReq", "");
+  Serial.println("Restored lastValveRequestId: " + (lastValveRequestId.length() ? lastValveRequestId : "(none)"));
 
+  tempSensor.begin();
+  Serial.println("Temperature sensor on GPIO " + String(TEMP_PIN) + " — " + String(tempSensor.getDeviceCount()) + " device(s) found");
   Serial.println("Moisture sensor on GPIO " + String(MOISTURE_PIN));
   Serial.println("Kasa light: " + String(strlen(KASA_LIGHT_IP) ? KASA_LIGHT_IP : "(not configured)"));
   Serial.println("Kasa fan: " + String(KASA_FAN_IP));
   Serial.println("Polling: " + azureBlobUrl());
+  // OTA (Over-The-Air) updates — flash wirelessly from Arduino IDE
+  ArduinoOTA.setHostname("esp32-irrigation");
+  ArduinoOTA.onStart([]() { Serial.println("[OTA] Update starting..."); });
+  ArduinoOTA.onEnd([]() { Serial.println("[OTA] Update complete! Rebooting..."); });
+  ArduinoOTA.onError([](ota_error_t error) { Serial.printf("[OTA] Error %u\n", error); });
+  ArduinoOTA.begin();
+  Serial.println("OTA enabled: esp32-irrigation");
+
   Serial.println("Ready.");
 }
 
@@ -872,12 +1118,15 @@ void loop() {
     }
   }
 
+  ArduinoOTA.handle();
   server.handleClient();
   readMoisture();
+  readTemperature();
   uploadMoistureData();
   pollForCommand();
   checkIrrigationTimer();
   pollLightSchedule();
   updateLights();
   pollFanCommand();
+  pollValveCommand();
 }
