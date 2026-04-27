@@ -41,6 +41,7 @@ CAPTURE_POLL_INTERVAL = 2  # seconds between checks
 MOISTURE_BLOB_NAME = "moisture-data.json"
 LIGHT_SCHEDULE_BLOB_NAME = "light-schedule.json"
 FAN_COMMAND_BLOB_NAME = "fan-command.json"
+HUMIDIFIER_STATUS_BLOB_NAME = "humidifier-status.json"
 VALVE_COMMAND_BLOB_NAME = "valve-command.json"
 GARDEN_LOG_BLOB_PREFIX = "garden-log"  # becomes garden-log-{user_id}.json
 MAX_LOG_ENTRIES = 50  # keep last ~6 days at 3-hour intervals
@@ -726,6 +727,42 @@ class FoundryGardeningAgent:
 
         return result
 
+    def _write_humidifier_status_blob(self, status: dict):
+        """Write humidifier status to blob with history for dashboard charts."""
+        try:
+            ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            client = self._get_iot_blob_client()
+            container = _env("IOT_BLOB_CONTAINER", "garden-images")
+            blob = client.get_blob_client(container=container, blob=HUMIDIFIER_STATUS_BLOB_NAME)
+
+            # Read existing data to preserve history
+            existing = {"current": {}, "readings": []}
+            try:
+                raw = blob.download_blob().readall()
+                existing = json.loads(raw)
+            except Exception:
+                pass
+
+            # Update current
+            current = {**status, "timestamp": ts}
+
+            # Append to history
+            readings = existing.get("readings", [])
+            if status.get("humidity") is not None:
+                readings.append({"ts": ts, "humidity": status["humidity"], "is_on": status.get("is_on", False)})
+            # Keep last 576 entries (~48 hours at 5-min intervals, though humidity checks are less frequent)
+            if len(readings) > 576:
+                readings = readings[-576:]
+
+            blob.upload_blob(
+                json.dumps({"current": current, "readings": readings}),
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/json"),
+            )
+            logger.info(f"Humidifier status written to blob: humidity={status.get('humidity')}%")
+        except Exception as e:
+            logger.warning(f"Failed to write humidifier status blob: {e}")
+
     async def _control_humidifier(self, action: str, target_humidity: int = None, mist_level: int = None) -> str:
         """Control the humidifier. Actions: on, off, auto, status."""
         manager, h = await self._get_humidifier()
@@ -768,6 +805,7 @@ class FoundryGardeningAgent:
         elif action == "status":
             status = await self._get_humidifier_status()
             if status:
+                self._write_humidifier_status_blob(status)
                 return (f"Humidity: {status['humidity']}%, "
                         f"On: {status['is_on']}, "
                         f"Mist: {status['mist_level']}, "

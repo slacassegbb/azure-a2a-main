@@ -88,6 +88,8 @@ int lastMoistureRaw = 0;
 float smoothedMoisture = 0.0;  // Exponential moving average
 bool moistureInitialized = false;
 unsigned long lastMoistureUploadMs = 0;
+String pendingEvents = "";  // JSON events to include in next moisture upload
+const int MAX_EVENTS = 50;  // keep last 50 events
 
 // Light schedule state
 String lastLightRequestId = "";
@@ -126,6 +128,21 @@ unsigned long lastTempReadMs = 0;
 const unsigned long TEMP_READ_INTERVAL_MS = 30000;  // read every 30s
 
 WebServer server(80);
+
+void recordEvent(const String& type, const String& detail = "") {
+  time_t now = time(nullptr);
+  if (now < 1700000000) return;
+  struct tm tmInfo;
+  gmtime_r(&now, &tmInfo);
+  char isoBuf[30];
+  strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
+  String entry = "{\"ts\":\"" + String(isoBuf) + "\",\"type\":\"" + type + "\"";
+  if (detail.length() > 0) entry += ",\"detail\":\"" + detail + "\"";
+  entry += "}";
+  if (pendingEvents.length() > 0) pendingEvents += ",";
+  pendingEvents += entry;
+  Serial.println("[EVENT] " + type + (detail.length() ? " " + detail : ""));
+}
 
 // ── Relay helpers (active LOW) ──
 void relayOn()  { digitalWrite(RELAY_PIN, LOW);  }
@@ -694,6 +711,7 @@ void pollValveCommand() {
   valveIrrigationStartMs = millis();
   valveIrrigationDurationMs = (unsigned long)durationSec * 1000UL;
   activeValvePin = valvePin;
+  recordEvent("valve", valveName + " " + String(durationSec) + "s");
 }
 
 // ------------------------------------------------------------------
@@ -716,7 +734,8 @@ void uploadMoistureData() {
   char isoBuf[30];
   strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
 
-  String newEntry = "{\"ts\":\"" + String(isoBuf) + "\",\"raw\":" + String(lastMoistureRaw) + ",\"pct\":" + String(moisturePct) + "}";
+  String newEntry = "{\"ts\":\"" + String(isoBuf) + "\",\"raw\":" + String(lastMoistureRaw) + ",\"pct\":" + String(moisturePct)
+                  + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "") + "}";
 
   // Download existing history
   String existing = downloadBlob(String(MOISTURE_BLOB_NAME));
@@ -753,13 +772,41 @@ void uploadMoistureData() {
     entryCount--;
   }
 
+  // Merge pending events with existing events from blob
+  String events = "";
+  if (existing.length() > 10) {
+    int evStart = existing.indexOf("\"events\"");
+    if (evStart >= 0) {
+      int evArrStart = existing.indexOf('[', evStart);
+      int evArrEnd = existing.indexOf(']', evArrStart);
+      if (evArrStart >= 0 && evArrEnd > evArrStart) {
+        events = existing.substring(evArrStart + 1, evArrEnd);
+      }
+    }
+  }
+  if (pendingEvents.length() > 0) {
+    if (events.length() > 0) events += ",";
+    events += pendingEvents;
+    pendingEvents = "";  // clear after flush
+  }
+  // Trim events to max
+  int evCount = 0;
+  for (int i = 0; i < (int)events.length(); i++) { if (events[i] == '{') evCount++; }
+  while (evCount > MAX_EVENTS) {
+    int fc = events.indexOf("},");
+    if (fc < 0) break;
+    events = events.substring(fc + 2);
+    evCount--;
+  }
+
   // Build final JSON
   String json = "{\"current\":{\"raw\":" + String(lastMoistureRaw)
               + ",\"pct\":" + String(moisturePct)
               + ",\"temp_c\":" + String(lastTempC, 1)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
-              + "},\"readings\":[" + readings + "]}";
+              + "},\"readings\":[" + readings
+              + "],\"events\":[" + events + "]}";
 
   if (uploadJsonToBlob(String(MOISTURE_BLOB_NAME), json)) {
     Serial.println("[MOISTURE] Uploaded to blob (" + String(moisturePct) + "%)");
@@ -879,6 +926,7 @@ void startIrrigation(const String& requestId, unsigned long duration) {
   isIrrigating = true;
   irrigationStartMs = millis();
   relayOn();
+  recordEvent("irrigate", "pump " + String(duration / 1000) + "s");
 }
 
 void readMoisture() {
