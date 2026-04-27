@@ -2,6 +2,8 @@ export interface MoistureReading {
   ts: string;
   raw: number;
   pct: number;
+  temp_c?: number;
+  light?: number;
 }
 
 export interface GardenEvent {

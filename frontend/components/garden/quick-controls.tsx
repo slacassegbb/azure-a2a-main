@@ -62,65 +62,64 @@ export default function QuickControls({ data, onRefresh, inline = false }: Quick
   if (inline) {
     // Compact horizontal layout for the header bar — big touch targets
     return (
-      <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+      <div className="flex items-center gap-1 xl:gap-2 flex-wrap">
         {/* Irrigation */}
-        <span className="text-[10px] uppercase tracking-wider font-medium shrink-0" style={{ color: "hsl(220, 10%, 45%)" }}>Irrigate</span>
+        <span className="text-[9px] xl:text-[10px] uppercase tracking-wider font-medium shrink-0 mr-0.5" style={{ color: "hsl(220, 10%, 45%)" }}>Irrigate</span>
         {[
-          { key: "a", label: "💧 Water", color: "hsl(185, 90%, 55%)" },
-          { key: "b", label: "🌱 Grow", color: "hsl(152, 75%, 50%)" },
-          { key: "c", label: "🌸 Bloom", color: "hsl(330, 80%, 65%)" },
+          { key: "a", label: "💧", labelXl: "💧 Water", color: "hsl(185, 90%, 55%)" },
+          { key: "b", label: "🌱", labelXl: "🌱 Grow", color: "hsl(152, 75%, 50%)" },
+          { key: "c", label: "🌸", labelXl: "🌸 Bloom", color: "hsl(330, 80%, 65%)" },
         ].map(v => (
           <button
             key={v.key}
             onClick={() => doAction(`valve-${v.key}`, "irrigate_valve", { valve: v.key, duration_seconds: duration })}
             disabled={loading === `valve-${v.key}`}
-            className="px-3 py-2 rounded-lg text-xs font-semibold transition-all active:scale-95 touch-manipulation"
+            className="px-2 py-1 xl:px-3 xl:py-1.5 rounded-md xl:rounded-lg text-[11px] xl:text-xs font-semibold transition-all active:scale-95 touch-manipulation"
             style={{
               background: success === `valve-${v.key}` ? "hsl(152, 75%, 50%, 0.2)" : `${v.color}12`,
               border: `1px solid ${success === `valve-${v.key}` ? "hsl(152, 75%, 50%)" : v.color}30`,
               color: success === `valve-${v.key}` ? "hsl(152, 75%, 50%)" : v.color,
-              minHeight: "32px",
             }}
           >
-            {loading === `valve-${v.key}` ? <Loader2 className="w-3 h-3 animate-spin" /> : v.label}
+            {loading === `valve-${v.key}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <><span className="xl:hidden">{v.label}</span><span className="hidden xl:inline">{v.labelXl}</span></>}
           </button>
         ))}
         <select
           value={duration}
           onChange={(e) => setDuration(Number(e.target.value))}
-          className="text-xs rounded-lg px-2 py-2 border-0 outline-none touch-manipulation"
-          style={{ background: "hsl(220, 15%, 16%)", color: "hsl(220, 10%, 70%)", minHeight: "32px" }}
+          className="text-[10px] xl:text-xs rounded-md px-1.5 py-1 xl:px-2 xl:py-1.5 border-0 outline-none touch-manipulation"
+          style={{ background: "hsl(220, 15%, 16%)", color: "hsl(220, 10%, 70%)" }}
         >
           {DURATION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
 
-        <div className="w-px h-6 mx-1" style={{ background: "hsl(220, 15%, 20%)" }} />
+        <div className="w-px h-5 xl:h-6 mx-0.5 xl:mx-1" style={{ background: "hsl(220, 15%, 20%)" }} />
 
         {/* Fan */}
-        <span className="text-[10px] uppercase tracking-wider font-medium shrink-0" style={{ color: "hsl(220, 10%, 45%)" }}>Fan</span>
+        <span className="text-[9px] xl:text-[10px] uppercase tracking-wider font-medium shrink-0 mr-0.5" style={{ color: "hsl(220, 10%, 45%)" }}>Fan</span>
         {FAN_SPEEDS.map(speed => {
           const isActive = activeFanSpeed === speed;
           return (
             <button
               key={speed}
               onClick={() => { setActiveFanSpeed(speed); doAction(`fan-${speed}`, "set_fan", { state: speed > 0, speed }); }}
-              className="px-2.5 py-2 rounded-lg text-[11px] font-semibold transition-all active:scale-95 touch-manipulation"
+              className="px-1.5 py-1 xl:px-2.5 xl:py-1.5 rounded-md xl:rounded-lg text-[10px] xl:text-[11px] font-semibold transition-all active:scale-95 touch-manipulation"
               style={{
                 background: isActive ? "hsl(185, 70%, 55%, 0.2)" : "hsl(220, 15%, 13%)",
                 border: `1px solid ${isActive ? "hsl(185, 70%, 55%)" : "hsl(220, 15%, 18%)"}`,
                 color: isActive ? "hsl(185, 70%, 55%)" : "hsl(220, 10%, 45%)",
-                minHeight: "32px", minWidth: "32px",
+                minWidth: "28px",
               }}
             >
-              {loading === `fan-${speed}` ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : speed === 0 ? "OFF" : `${speed}%`}
+              {loading === `fan-${speed}` ? <Loader2 className="w-2.5 h-2.5 animate-spin mx-auto" /> : speed === 0 ? "OFF" : `${speed}%`}
             </button>
           );
         })}
 
-        <div className="w-px h-6 mx-1" style={{ background: "hsl(220, 15%, 20%)" }} />
+        <div className="w-px h-5 xl:h-6 mx-0.5 xl:mx-1" style={{ background: "hsl(220, 15%, 20%)" }} />
 
         {/* Light */}
-        <span className="text-[10px] uppercase tracking-wider font-medium shrink-0" style={{ color: "hsl(220, 10%, 45%)" }}>Light</span>
+        <span className="text-[9px] xl:text-[10px] uppercase tracking-wider font-medium shrink-0 mr-0.5" style={{ color: "hsl(220, 10%, 45%)" }}>Light</span>
         {[0, 25, 50, 75, 100].map(brightness => {
           const isActive = lightBrightness === brightness;
           return (
@@ -131,15 +130,15 @@ export default function QuickControls({ data, onRefresh, inline = false }: Quick
                 doAction(`light-${brightness}`, brightness === 0 ? "set_light_power" : "set_light_brightness",
                   brightness === 0 ? { state: false } : { brightness });
               }}
-              className="px-2.5 py-2 rounded-lg text-[11px] font-semibold transition-all active:scale-95 touch-manipulation"
+              className="px-1.5 py-1 xl:px-2.5 xl:py-1.5 rounded-md xl:rounded-lg text-[10px] xl:text-[11px] font-semibold transition-all active:scale-95 touch-manipulation"
               style={{
                 background: isActive ? "hsl(48, 95%, 65%, 0.2)" : "hsl(220, 15%, 13%)",
                 border: `1px solid ${isActive ? "hsl(48, 95%, 65%)" : "hsl(220, 15%, 18%)"}`,
                 color: isActive ? "hsl(48, 95%, 65%)" : "hsl(220, 10%, 45%)",
-                minHeight: "32px", minWidth: "32px",
+                minWidth: "28px",
               }}
             >
-              {loading === `light-${brightness}` ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : brightness === 0 ? "OFF" : `${brightness}%`}
+              {loading === `light-${brightness}` ? <Loader2 className="w-2.5 h-2.5 animate-spin mx-auto" /> : brightness === 0 ? "OFF" : `${brightness}%`}
             </button>
           );
         })}

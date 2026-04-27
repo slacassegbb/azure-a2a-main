@@ -735,7 +735,8 @@ void uploadMoistureData() {
   strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
 
   String newEntry = "{\"ts\":\"" + String(isoBuf) + "\",\"raw\":" + String(lastMoistureRaw) + ",\"pct\":" + String(moisturePct)
-                  + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "") + "}";
+                  + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "")
+                  + ",\"light\":" + String(constrain(currentBrightness, 0, 100)) + "}";
 
   // Download existing history
   String existing = downloadBlob(String(MOISTURE_BLOB_NAME));

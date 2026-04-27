@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LightSchedule } from "@/lib/garden/types";
+import { LightSchedule, MoistureReading } from "@/lib/garden/types";
 import { getCurrentBrightness, getLightPhase, getDayProgress } from "@/lib/garden/calculations";
 
 interface LightTimelineProps {
   schedule: LightSchedule | null | undefined;
+  readings?: MoistureReading[];
 }
 
-export default function LightTimeline({ schedule }: LightTimelineProps) {
+export default function LightTimeline({ schedule, readings = [] }: LightTimelineProps) {
   const [progress, setProgress] = useState(getDayProgress());
   const [brightness, setBrightness] = useState(0);
   const [phase, setPhase] = useState<string>("night");
@@ -80,7 +81,7 @@ export default function LightTimeline({ schedule }: LightTimelineProps) {
   const sunGlow = brightness > 50 ? 20 : brightness > 0 ? 12 : 0;
 
   return (
-    <div className="rounded-xl p-4" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
+    <div className="rounded-xl p-3 md:p-4 h-full flex flex-col" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>
           Light Cycle
@@ -92,7 +93,7 @@ export default function LightTimeline({ schedule }: LightTimelineProps) {
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: "160px" }}>
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full flex-1" preserveAspectRatio="xMidYMid meet">
         <defs>
           {/* Sky gradient */}
           <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
@@ -198,6 +199,22 @@ export default function LightTimeline({ schedule }: LightTimelineProps) {
             <circle cx={420} cy={15} r={1} fill="hsl(220, 30%, 40%)" opacity={0.6} />
           </>
         )}
+
+        {/* Real brightness history dots — plotted on the arc based on actual light values */}
+        {readings.filter(r => r.light !== undefined && r.light > 0).map((r, i) => {
+          const d = new Date(r.ts);
+          const hourFrac = (d.getHours() + d.getMinutes() / 60) / 24;
+          // Only plot if within the day range
+          if (hourFrac < sunriseStart || hourFrac > sunsetEnd) return null;
+          const t = (hourFrac - sunriseStart) / dayRange;
+          const x = arcPadding + t * arcW;
+          // Y based on actual brightness (0=horizon, 100=top of arc)
+          const maxY = Math.sin(t * Math.PI) * arcHeight;
+          const y = arcBottom - (r.light! / 100) * maxY;
+          return (
+            <circle key={i} cx={x} cy={y} r={2} fill="hsl(48, 95%, 65%)" opacity={0.6} />
+          );
+        })}
       </svg>
 
       {/* Ramp info */}

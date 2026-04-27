@@ -776,13 +776,25 @@ class FoundryGardeningAgent:
                     await h.set_mist_level(mist_level)
                 except Exception:
                     pass
+            # Write status to blob for dashboard
+            try:
+                status = await self._get_humidifier_status()
+                if status:
+                    self._write_humidifier_status_blob(status)
+            except Exception:
+                pass
             return "Humidifier turned on" + (f" at mist level {mist_level}" if mist_level else "")
         elif action == "off":
             await h.turn_off()
+            try:
+                status = await self._get_humidifier_status()
+                if status:
+                    self._write_humidifier_status_blob(status)
+            except Exception:
+                pass
             return "Humidifier turned off"
         elif action == "auto":
             await h.turn_on()
-            # Try setting target humidity and auto mode — some model variants may not support all methods
             results = []
             if target_humidity:
                 try:
@@ -795,17 +807,31 @@ class FoundryGardeningAgent:
                 results.append("auto mode enabled")
             except Exception as e:
                 logger.warning(f"set_auto_mode failed: {e}")
-                # Fallback: set manual mode with conservative mist level
                 try:
                     await h.set_mist_level(mist_level or 3)
                     results.append(f"manual mode, mist level {mist_level or 3}")
                 except Exception:
                     pass
+            # Write status to blob for dashboard
+            try:
+                await asyncio.sleep(2)  # Wait for VeSync to update
+                status = await self._get_humidifier_status()
+                if status:
+                    self._write_humidifier_status_blob(status)
+                    logger.info(f"Humidifier status blob written after auto: humidity={status.get('humidity')}")
+                else:
+                    logger.warning("Humidifier status returned None after auto")
+            except Exception as e:
+                logger.warning(f"Failed to write humidifier blob after auto: {e}")
             return "Humidifier: " + ", ".join(results) if results else "Humidifier turned on"
         elif action == "status":
             status = await self._get_humidifier_status()
             if status:
-                self._write_humidifier_status_blob(status)
+                try:
+                    self._write_humidifier_status_blob(status)
+                    logger.info(f"Humidifier status blob written: humidity={status.get('humidity')}")
+                except Exception as e:
+                    logger.error(f"FAILED to write humidifier blob: {e}")
                 return (f"Humidity: {status['humidity']}%, "
                         f"On: {status['is_on']}, "
                         f"Mist: {status['mist_level']}, "
@@ -1281,6 +1307,11 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 if action == "status":
                     status = await self._get_humidifier_status()
                     if status:
+                        try:
+                            self._write_humidifier_status_blob(status)
+                            logger.info(f"Humidifier status blob written from execute: humidity={status.get('humidity')}")
+                        except Exception as e:
+                            logger.error(f"FAILED to write humidifier blob: {e}")
                         water_warning = " ⚠️ WATER TANK LOW — needs refill!" if status.get("water_lacks") else ""
                         return (f"Room humidity: {status['humidity']}%, "
                                 f"Humidifier: {'on' if status['is_on'] else 'off'}, "
