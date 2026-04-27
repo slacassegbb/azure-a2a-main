@@ -16,7 +16,7 @@ export default function CameraFeed({ url, timestamp }: CameraFeedProps) {
   return (
     <>
       <div
-        className="rounded-xl overflow-hidden relative cursor-pointer group h-full min-h-[280px]"
+        className="rounded-xl overflow-hidden relative cursor-pointer group h-full min-h-[200px] md:min-h-[240px] xl:min-h-[280px]"
         style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}
         onClick={() => url && setFullscreen(true)}
       >
@@ -25,10 +25,9 @@ export default function CameraFeed({ url, timestamp }: CameraFeedProps) {
             src={url}
             alt="Garden camera"
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-            style={{ minHeight: "280px" }}
           />
         ) : (
-          <div className="w-full h-full min-h-[280px] flex flex-col items-center justify-center gap-3" style={{ color: "hsl(220, 10%, 35%)" }}>
+          <div className="w-full h-full min-h-[200px] flex flex-col items-center justify-center gap-3" style={{ color: "hsl(220, 10%, 35%)" }}>
             <Camera className="w-10 h-10" />
             <span className="text-sm">No camera feed</span>
           </div>

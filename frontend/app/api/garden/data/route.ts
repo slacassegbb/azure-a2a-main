@@ -17,9 +17,14 @@ function getClient() {
 async function readJsonBlob(containerClient: any, blobName: string) {
   try {
     const blob = containerClient.getBlobClient(blobName);
-    const buf = await blob.downloadToBuffer();
-    return JSON.parse(buf.toString());
-  } catch {
+    const response = await blob.download(0);
+    const chunks: Buffer[] = [];
+    for await (const chunk of response.readableStreamBody as any) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return JSON.parse(Buffer.concat(chunks).toString());
+  } catch (e: any) {
+    console.error(`[Garden API] Failed to read ${blobName}:`, e.message);
     return null;
   }
 }

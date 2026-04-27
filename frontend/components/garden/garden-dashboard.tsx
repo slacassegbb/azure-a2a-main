@@ -61,43 +61,52 @@ export default function GardenDashboard() {
 
   return (
     <div className="min-h-screen text-white" style={{ background: "hsl(220, 20%, 7%)" }}>
-      {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur-md border-b px-4 py-3 flex items-center justify-between"
-        style={{ background: "hsla(220, 20%, 7%, 0.85)", borderColor: "hsl(220, 15%, 16%)" }}>
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "hsl(152, 75%, 50%, 0.15)" }}>
-            <Sprout className="w-5 h-5" style={{ color: "hsl(152, 75%, 50%)" }} />
+      {/* Header + Quick Controls */}
+      <header className="sticky top-0 z-50 backdrop-blur-md border-b"
+        style={{ background: "hsla(220, 20%, 7%, 0.9)", borderColor: "hsl(220, 15%, 16%)" }}>
+        <div className="max-w-[1400px] mx-auto px-3 py-2 md:px-4 md:py-2 flex items-center gap-2 md:gap-3 flex-wrap">
+          {/* Title */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "hsl(152, 75%, 50%, 0.15)" }}>
+              <Sprout className="w-4 h-4" style={{ color: "hsl(152, 75%, 50%)" }} />
+            </div>
+            <h1 className="text-base font-semibold tracking-tight">Smart Garden</h1>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">Smart Garden</h1>
-            <p className="text-xs" style={{ color: "hsl(220, 10%, 50%)" }}>Autonomous AI Manager</p>
+
+          <div className="w-px h-6" style={{ background: "hsl(220, 15%, 20%)" }} />
+
+          {/* Inline quick controls */}
+          <div className="flex-1 min-w-0">
+            <QuickControls data={data} onRefresh={fetchData} inline />
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {error && <span className="text-xs px-2 py-1 rounded-full" style={{ background: "hsl(0, 85%, 60%, 0.15)", color: "hsl(0, 85%, 60%)" }}>Error</span>}
-          <span className="text-xs" style={{ color: "hsl(220, 10%, 50%)" }}>
-            {lastFetched ? `Updated ${secondsAgo}s ago` : "Loading..."}
-          </span>
-          <button
-            onClick={fetchData}
-            disabled={refreshing}
-            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} style={{ color: "hsl(220, 10%, 50%)" }} />
-          </button>
+
+          {/* Status + refresh */}
+          <div className="flex items-center gap-2 shrink-0">
+            {error && <span className="text-[10px] px-2 py-1 rounded-full" style={{ background: "hsl(0, 85%, 60%, 0.15)", color: "hsl(0, 85%, 60%)" }}>Error</span>}
+            <span className="text-[10px]" style={{ color: "hsl(220, 10%, 45%)" }}>
+              {lastFetched ? `${secondsAgo}s` : "..."}
+            </span>
+            <button
+              onClick={fetchData}
+              disabled={refreshing}
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-white/5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} style={{ color: "hsl(220, 10%, 45%)" }} />
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-[1400px] mx-auto p-4 space-y-4">
+      <main className="max-w-[1400px] mx-auto p-2 md:p-3 xl:p-4 space-y-2 md:space-y-3 xl:space-y-4">
         {/* Top row: Camera + Sensors + Light Timeline */}
-        <div className="grid grid-cols-1 md:grid-cols-6 xl:grid-cols-12 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 xl:grid-cols-12 gap-2 md:gap-3 xl:gap-4">
           {/* Camera */}
           <div className="col-span-1 md:col-span-3 xl:col-span-4 xl:row-span-2">
             <CameraFeed url={data?.camera_url} timestamp={data?.camera_timestamp} />
           </div>
 
           {/* Sensor Cards */}
-          <div className="col-span-1 md:col-span-3 xl:col-span-8 grid grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="col-span-1 md:col-span-3 xl:col-span-8 grid grid-cols-2 xl:grid-cols-3 gap-2 md:gap-3 xl:gap-4">
             <SensorCard
               label="Temperature"
               value={tempC != null ? tempC.toFixed(1) : "--"}
@@ -135,8 +144,11 @@ export default function GardenDashboard() {
           </div>
         </div>
 
+        {/* Photo Timeline — right below camera/light */}
+        <PhotoTimeline photos={data?.photos || []} />
+
         {/* Middle row: Status + Agent Log */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4">
           <div className="space-y-4">
             <SystemStatus data={data} />
             <div className="grid grid-cols-2 gap-4">
@@ -147,14 +159,8 @@ export default function GardenDashboard() {
           <AgentLog entries={data?.garden_log || []} />
         </div>
 
-        {/* Quick Controls */}
-        <QuickControls data={data} onRefresh={fetchData} />
-
         {/* Historical Charts */}
         <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={moisture?.events || []} />
-
-        {/* Photo Timeline */}
-        <PhotoTimeline photos={data?.photos || []} />
       </main>
     </div>
   );

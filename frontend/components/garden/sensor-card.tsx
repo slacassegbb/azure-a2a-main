@@ -22,7 +22,7 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
   const trend = history.length > 2 ? getTrend(history.map(h => ({ pct: h.value })), 6) : null;
 
   return (
-    <div className="rounded-xl p-4 flex flex-col justify-between min-h-[160px] relative overflow-hidden"
+    <div className="rounded-xl p-3 md:p-4 flex flex-col justify-between min-h-[130px] md:min-h-[160px] relative overflow-hidden"
       style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -43,8 +43,8 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
       {/* Value */}
       <div className="mt-2">
         <div className="flex items-baseline gap-1">
-          <span className="text-3xl font-semibold tracking-tight" style={{ color: "white" }}>{value}</span>
-          <span className="text-sm font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>{unit}</span>
+          <span className="text-2xl md:text-3xl font-semibold tracking-tight" style={{ color: "white" }}>{value}</span>
+          <span className="text-xs md:text-sm font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>{unit}</span>
         </div>
         {secondaryValue && (
           <span className="text-xs" style={{ color: "hsl(220, 10%, 45%)" }}>{secondaryValue}</span>

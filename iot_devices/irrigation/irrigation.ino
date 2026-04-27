@@ -743,11 +743,22 @@ void uploadMoistureData() {
   // Parse existing readings array or start fresh
   String readings = "";
   if (existing.length() > 10 && existing.indexOf("\"readings\"") >= 0) {
-    // Extract the readings array content
-    int arrStart = existing.indexOf('[');
-    int arrEnd = existing.lastIndexOf(']');
-    if (arrStart >= 0 && arrEnd > arrStart) {
-      readings = existing.substring(arrStart + 1, arrEnd);
+    // Find the readings array specifically (not events or other arrays)
+    int readingsKey = existing.indexOf("\"readings\"");
+    int arrStart = existing.indexOf('[', readingsKey);
+    if (arrStart >= 0) {
+      // Find matching ] by counting brackets
+      int depth = 1;
+      int arrEnd = arrStart + 1;
+      while (arrEnd < (int)existing.length() && depth > 0) {
+        if (existing[arrEnd] == '[') depth++;
+        else if (existing[arrEnd] == ']') depth--;
+        arrEnd++;
+      }
+      arrEnd--; // back to the ]
+      if (depth == 0 && arrEnd > arrStart) {
+        readings = existing.substring(arrStart + 1, arrEnd);
+      }
     }
   }
 
@@ -772,32 +783,9 @@ void uploadMoistureData() {
     entryCount--;
   }
 
-  // Merge pending events with existing events from blob
-  String events = "";
-  if (existing.length() > 10) {
-    int evStart = existing.indexOf("\"events\"");
-    if (evStart >= 0) {
-      int evArrStart = existing.indexOf('[', evStart);
-      int evArrEnd = existing.indexOf(']', evArrStart);
-      if (evArrStart >= 0 && evArrEnd > evArrStart) {
-        events = existing.substring(evArrStart + 1, evArrEnd);
-      }
-    }
-  }
-  if (pendingEvents.length() > 0) {
-    if (events.length() > 0) events += ",";
-    events += pendingEvents;
-    pendingEvents = "";  // clear after flush
-  }
-  // Trim events to max
-  int evCount = 0;
-  for (int i = 0; i < (int)events.length(); i++) { if (events[i] == '{') evCount++; }
-  while (evCount > MAX_EVENTS) {
-    int fc = events.indexOf("},");
-    if (fc < 0) break;
-    events = events.substring(fc + 2);
-    evCount--;
-  }
+  // Events: only write pending events, don't try to parse from existing blob
+  String events = pendingEvents;
+  pendingEvents = "";
 
   // Build final JSON
   String json = "{\"current\":{\"raw\":" + String(lastMoistureRaw)
@@ -806,7 +794,7 @@ void uploadMoistureData() {
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + "},\"readings\":[" + readings
-              + "],\"events\":[" + events + "]}";
+              + "]" + (events.length() > 0 ? ",\"events\":[" + events + "]" : "") + "}";
 
   if (uploadJsonToBlob(String(MOISTURE_BLOB_NAME), json)) {
     Serial.println("[MOISTURE] Uploaded to blob (" + String(moisturePct) + "%)");
