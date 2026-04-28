@@ -946,6 +946,12 @@ void readMoisture() {
   }
   int currentRaw = (validCount > 0) ? (total / validCount) : lastMoistureRaw;
 
+  // Reject extreme outliers (pump noise, ADC glitch)
+  if (currentRaw > 200) {
+    Serial.println("[MOISTURE] Outlier rejected: " + String(currentRaw));
+    return;
+  }
+
   // Exponential moving average (alpha = 0.15 — heavy smoothing)
   if (!moistureInitialized) {
     smoothedMoisture = currentRaw;
