@@ -49,6 +49,7 @@ export default function AgentLog({ entries }: AgentLogProps) {
                 <details
                   key={`${entry.timestamp}-${i}`}
                   className="group rounded-lg hover:bg-white/[0.03] transition-colors"
+                  open={i === 0}
                 >
                   <summary className="flex items-center gap-3 px-2 py-2 cursor-pointer list-none">
                     <span className="text-[10px] shrink-0 w-16 text-right" style={{ color: "hsl(220, 10%, 40%)" }}>

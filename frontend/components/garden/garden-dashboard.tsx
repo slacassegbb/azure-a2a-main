@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Sprout } from "lucide-react";
+import { RefreshCw, Sprout, Settings } from "lucide-react";
+import GardenConfig from "./garden-config";
 import { GardenDashboardData } from "@/lib/garden/types";
 import { POLL_INTERVAL_MS } from "@/lib/garden/constants";
 import SensorCard from "./sensor-card";
@@ -71,6 +72,7 @@ export default function GardenDashboard() {
               <Sprout className="w-3.5 h-3.5 xl:w-4 xl:h-4" style={{ color: "hsl(152, 75%, 50%)" }} />
             </div>
             <h1 className="text-sm xl:text-base font-semibold tracking-tight hidden md:block">Smart Garden</h1>
+            <GardenConfig />
           </div>
 
           <div className="w-px h-5 shrink-0" style={{ background: "hsl(220, 15%, 20%)" }} />

@@ -42,6 +42,7 @@ MOISTURE_BLOB_NAME = "moisture-data.json"
 LIGHT_SCHEDULE_BLOB_NAME = "light-schedule.json"
 FAN_COMMAND_BLOB_NAME = "fan-command.json"
 HUMIDIFIER_STATUS_BLOB_NAME = "humidifier-status.json"
+GARDEN_CONFIG_BLOB_PREFIX = "garden-config"  # garden-config-{user_id}.json
 VALVE_COMMAND_BLOB_NAME = "valve-command.json"
 GARDEN_LOG_BLOB_PREFIX = "garden-log"  # becomes garden-log-{user_id}.json
 MAX_LOG_ENTRIES = 50  # keep last ~6 days at 3-hour intervals
@@ -534,6 +535,19 @@ class FoundryGardeningAgent:
         for e in recent:
             lines.append(f"- **{e.get('timestamp', '?')}**: {e.get('summary', '')}")
         return "\n".join(lines)
+
+    # ── Garden config ─────────────────────────────────────────────────
+    def _read_garden_config(self, user_id: str = "default") -> str:
+        """Read the user's garden description from blob storage."""
+        try:
+            safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+            client = self._get_iot_blob_client()
+            container = _env("IOT_BLOB_CONTAINER", "garden-images")
+            blob = client.get_blob_client(container=container, blob=f"{GARDEN_CONFIG_BLOB_PREFIX}-{safe_id}.json")
+            data = json.loads(blob.download_blob().readall())
+            return data.get("description", "")
+        except Exception:
+            return ""
 
     # ── Timelapse video ────────────────────────────────────────────────
     def _create_timelapse_video(self, date_from: str, date_to: str, fps: int = 4, context_id: str = "") -> Optional[str]:
@@ -1395,6 +1409,14 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         # Extract user_id from context_id for per-user memory
         _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+
+        # Load garden config (user's garden description)
+        try:
+            garden_config = await asyncio.to_thread(self._read_garden_config, _user_id)
+            if garden_config.strip():
+                instructions += "\n\n## Garden Description (from the user)\n" + garden_config
+        except Exception as e:
+            logger.warning(f"Failed to load garden config: {e}")
 
         # Load garden activity log for context
         try:
