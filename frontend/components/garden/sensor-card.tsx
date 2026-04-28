@@ -1,10 +1,16 @@
 "use client";
 
-import { Thermometer, Droplets, Sun, Cloud, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { useState } from "react";
+import { Thermometer, Droplets, Sun, Cloud, Fan, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { getTrend } from "@/lib/garden/calculations";
 
-const ICONS: Record<string, any> = { thermometer: Thermometer, droplets: Droplets, sun: Sun, cloud: Cloud };
+const ICONS: Record<string, any> = { thermometer: Thermometer, droplets: Droplets, sun: Sun, cloud: Cloud, fan: Fan };
+
+interface ControlButton {
+  label: string;
+  value: number;
+}
 
 interface SensorCardProps {
   label: string;
@@ -15,11 +21,29 @@ interface SensorCardProps {
   icon: string;
   history?: { ts: string; value: number }[];
   dataKey?: string;
+  controls?: {
+    buttons: ControlButton[];
+    activeValue: number;
+    onSelect: (value: number) => Promise<void>;
+  };
 }
 
-export default function SensorCard({ label, value, unit, secondaryValue, color, icon, history = [] }: SensorCardProps) {
+export default function SensorCard({ label, value, unit, secondaryValue, color, icon, history = [], controls }: SensorCardProps) {
   const Icon = ICONS[icon] || Sun;
   const trend = history.length > 2 ? getTrend(history.map(h => ({ pct: h.value })), 6) : null;
+  const [loading, setLoading] = useState<number | null>(null);
+  const [activeVal, setActiveVal] = useState(controls?.activeValue ?? 0);
+  const isSpinning = icon === "fan" && activeVal > 0;
+
+  const handleControl = async (val: number) => {
+    if (!controls) return;
+    setLoading(val);
+    try {
+      await controls.onSelect(val);
+      setActiveVal(val);
+    } catch { /* ignore */ }
+    finally { setLoading(null); }
+  };
 
   return (
     <div className="rounded-xl p-3 md:p-4 flex flex-col justify-between min-h-[130px] md:min-h-[160px] relative overflow-hidden"
@@ -27,7 +51,10 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Icon className="w-4 h-4" style={{ color, opacity: 0.8 }} />
+          <Icon
+            className={`w-4 h-4 ${isSpinning ? "animate-spin" : ""}`}
+            style={{ color, opacity: 0.8, animationDuration: isSpinning ? `${Math.max(0.3, 2 - (activeVal / 100) * 1.7)}s` : undefined }}
+          />
           <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>
             {label}
           </span>
@@ -41,7 +68,7 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
       </div>
 
       {/* Value */}
-      <div className="mt-2">
+      <div className="mt-1">
         <div className="flex items-baseline gap-1">
           <span className="text-2xl md:text-3xl font-semibold tracking-tight" style={{ color: "white" }}>{value}</span>
           <span className="text-xs md:text-sm font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>{unit}</span>
@@ -53,8 +80,8 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
 
       {/* Sparkline */}
       {history.length > 3 && (
-        <div className="mt-2 -mx-2 -mb-1">
-          <ResponsiveContainer width="100%" height={48}>
+        <div className="-mx-2 -mb-1" style={{ marginTop: controls ? "2px" : "8px" }}>
+          <ResponsiveContainer width="100%" height={controls ? 32 : 48}>
             <AreaChart data={history.slice(-72)}>
               <defs>
                 <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
@@ -73,6 +100,31 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
               />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Inline controls */}
+      {controls && (
+        <div className="flex gap-1 mt-1.5">
+          {controls.buttons.map(btn => {
+            const isActive = activeVal === btn.value;
+            const isLoading = loading === btn.value;
+            return (
+              <button
+                key={btn.value}
+                onClick={() => handleControl(btn.value)}
+                disabled={isLoading}
+                className="flex-1 py-1 xl:py-1.5 rounded text-[9px] xl:text-[10px] font-semibold transition-all active:scale-95 touch-manipulation"
+                style={{
+                  background: isActive ? `${color}25` : "hsl(220, 15%, 13%)",
+                  border: `1px solid ${isActive ? color : "hsl(220, 15%, 18%)"}`,
+                  color: isActive ? color : "hsl(220, 10%, 42%)",
+                }}
+              >
+                {isLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin mx-auto" /> : btn.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

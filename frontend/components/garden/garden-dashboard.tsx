@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { RefreshCw, Sprout, Settings } from "lucide-react";
 import GardenConfig from "./garden-config";
 import { GardenDashboardData } from "@/lib/garden/types";
 import { POLL_INTERVAL_MS } from "@/lib/garden/constants";
+import { getCurrentBrightness } from "@/lib/garden/calculations";
 import SensorCard from "./sensor-card";
 import CameraFeed from "./camera-feed";
 import LightTimeline from "./light-timeline";
 import SystemStatus from "./system-status";
 import AgentLog from "./agent-log";
 import QuickControls from "./quick-controls";
+import IrrigationTile from "./irrigation-tile";
 import NextEvent from "./next-event";
 import LastAction from "./last-action";
 import EnvironmentChart from "./environment-chart";
@@ -59,6 +61,16 @@ export default function GardenDashboard() {
   const moisturePct = moisture?.current?.pct;
   const humidity = data?.humidifier?.current?.humidity;
   const humidityReadings = data?.humidifier?.readings || [];
+  const currentFan = data?.fan?.state ? (data.fan.speed || 100) : 0;
+
+  const sendControl = useCallback(async (action: string, params: Record<string, any>) => {
+    await fetch("/api/garden/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...params }),
+    });
+    setTimeout(fetchData, 3000);
+  }, [fetchData]);
 
   return (
     <div className="min-h-screen text-white" style={{ background: "hsl(220, 20%, 7%)" }}>
@@ -75,14 +87,8 @@ export default function GardenDashboard() {
             <GardenConfig />
           </div>
 
-          <div className="w-px h-5 shrink-0" style={{ background: "hsl(220, 15%, 20%)" }} />
-
-          {/* Quick controls — centered */}
-          <div className="flex-1 flex justify-center">
-            <QuickControls data={data} onRefresh={fetchData} inline />
-          </div>
-
-          <div className="w-px h-5 shrink-0" style={{ background: "hsl(220, 15%, 20%)" }} />
+          {/* Spacer */}
+          <div className="flex-1" />
 
           {/* Status + refresh — right */}
           <div className="flex items-center gap-2 shrink-0">
@@ -108,8 +114,8 @@ export default function GardenDashboard() {
           <LightTimeline schedule={schedule} readings={moisture?.readings} />
         </div>
 
-        {/* Row 2: Sensor cards — 3 across */}
-        <div className="grid grid-cols-3 gap-2 md:gap-3">
+        {/* Row 2: Sensor cards — 5 across (3 on mobile) */}
+        <div className="grid grid-cols-3 xl:grid-cols-5 gap-2 md:gap-3">
           <SensorCard
             label="Temperature"
             value={tempC != null ? tempC.toFixed(1) : "--"}
@@ -133,19 +139,86 @@ export default function GardenDashboard() {
             label="Humidity"
             value={humidity != null ? String(humidity) : "--"}
             unit="%"
-            secondaryValue={data?.humidifier?.current?.is_on ? "Humidifier ON" : data?.humidifier ? "Humidifier OFF" : "Via agent"}
+            secondaryValue={data?.humidifier?.current?.is_on ? "ON" : data?.humidifier ? "OFF" : "Via agent"}
             color="hsl(270, 70%, 65%)"
             icon="cloud"
             history={humidityReadings.map(r => ({ ts: r.ts, value: r.humidity }))}
             dataKey="value"
+            controls={{
+              buttons: [
+                { label: "OFF", value: 0 },
+                { label: "40%", value: 40 },
+                { label: "50%", value: 50 },
+                { label: "60%", value: 60 },
+              ],
+              activeValue: data?.humidifier?.current?.is_on ? (data.humidifier.current.target_humidity || 50) : 0,
+              onSelect: async (val) => {
+                if (val === 0) {
+                  await sendControl("set_humidifier", { action: "off" });
+                } else {
+                  await sendControl("set_humidifier", { action: "auto", target_humidity: val });
+                }
+              },
+            }}
+          />
+          <SensorCard
+            label="Light"
+            value={schedule ? String(getCurrentBrightness(schedule)) : "--"}
+            unit="%"
+            color="hsl(48, 95%, 65%)"
+            icon="sun"
+            history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.light ?? 0 })) || []}
+            dataKey="value"
+            controls={{
+              buttons: [
+                { label: "OFF", value: 0 },
+                { label: "25", value: 25 },
+                { label: "50", value: 50 },
+                { label: "75", value: 75 },
+                { label: "100", value: 100 },
+              ],
+              activeValue: schedule ? getCurrentBrightness(schedule) : 0,
+              onSelect: async (val) => {
+                if (val === 0) {
+                  await sendControl("set_light_power", { state: false });
+                } else {
+                  await sendControl("set_light_brightness", { brightness: val });
+                }
+              },
+            }}
+          />
+          <SensorCard
+            label="Fan"
+            value={currentFan > 0 ? String(currentFan) : "OFF"}
+            unit={currentFan > 0 ? "%" : ""}
+            color="hsl(185, 70%, 55%)"
+            icon="fan"
+            history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.fan ?? 0 })) || []}
+            dataKey="value"
+            controls={{
+              buttons: [
+                { label: "OFF", value: 0 },
+                { label: "25", value: 25 },
+                { label: "50", value: 50 },
+                { label: "75", value: 75 },
+                { label: "100", value: 100 },
+              ],
+              activeValue: currentFan,
+              onSelect: async (val) => {
+                await sendControl("set_fan", { state: val > 0, speed: val });
+              },
+            }}
           />
         </div>
 
-        {/* Middle row: Status + Agent Log */}
+        {/* Middle row: Irrigation+Status | Agent Log */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4">
-          <div className="space-y-4">
-            <SystemStatus data={data} />
-            <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <IrrigationTile onRefresh={fetchData} />
+              <SystemStatus data={data} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <NextEvent schedule={schedule} />
               <LastAction log={data?.garden_log || []} />
             </div>

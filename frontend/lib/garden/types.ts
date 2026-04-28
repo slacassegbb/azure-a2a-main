@@ -4,6 +4,7 @@ export interface MoistureReading {
   pct: number;
   temp_c?: number;
   light?: number;
+  fan?: number;
 }
 
 export interface GardenEvent {

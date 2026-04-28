@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { LightSchedule, MoistureReading } from "@/lib/garden/types";
 import { getCurrentBrightness, getLightPhase, getDayProgress } from "@/lib/garden/calculations";
 
@@ -13,6 +13,9 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
   const [progress, setProgress] = useState(getDayProgress());
   const [brightness, setBrightness] = useState(0);
   const [phase, setPhase] = useState<string>("night");
+  const [dragging, setDragging] = useState<"sunrise" | "sunset" | null>(null);
+  const [dragHour, setDragHour] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
     const update = () => {
@@ -27,27 +30,6 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
     return () => clearInterval(interval);
   }, [schedule]);
 
-  if (!schedule) {
-    return (
-      <div className="rounded-xl p-4" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
-        <span className="text-sm" style={{ color: "hsl(220, 10%, 40%)" }}>No light schedule</span>
-      </div>
-    );
-  }
-
-  const sunriseStart = schedule.sunrise_hour / 24;
-  const sunriseEnd = (schedule.sunrise_hour + schedule.sunrise_ramp_min / 60) / 24;
-  const sunsetStart = schedule.sunset_hour / 24;
-  const sunsetEnd = (schedule.sunset_hour + schedule.sunset_ramp_min / 60) / 24;
-
-  // Sun position on the arc
-  // Map progress to position on a semicircular arc
-  // Only show sun above horizon between sunrise start and sunset end
-  const isDaytime = progress >= sunriseStart && progress <= sunsetEnd;
-  const dayRange = sunsetEnd - sunriseStart;
-  const dayProgress = isDaytime ? (progress - sunriseStart) / dayRange : 0;
-
-  // Arc path: semicircle from left to right
   const svgW = 500;
   const svgH = 160;
   const arcPadding = 40;
@@ -55,11 +37,82 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
   const arcBottom = svgH - 25;
   const arcHeight = 100;
 
-  // Calculate sun position on arc
+  // Convert SVG X position to hour (0-24)
+  const xToHour = useCallback((clientX: number) => {
+    if (!svgRef.current) return 12;
+    const rect = svgRef.current.getBoundingClientRect();
+    const svgX = ((clientX - rect.left) / rect.width) * svgW;
+    const hour = ((svgX - arcPadding) / arcW) * 24;
+    // Snap to 0.5 hour increments
+    return Math.max(0, Math.min(23.5, Math.round(hour * 2) / 2));
+  }, [arcW]);
+
+  const saveSchedule = useCallback(async (sunriseHour: number, sunsetHour: number) => {
+    try {
+      await fetch("/api/garden/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_light_schedule",
+          sunrise_hour: sunriseHour,
+          sunset_hour: sunsetHour,
+        }),
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  const handlePointerDown = (type: "sunrise" | "sunset") => (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.target as Element).setPointerCapture(e.pointerId);
+    setDragging(type);
+    setDragHour(type === "sunrise" ? schedule?.sunrise_hour ?? 5 : schedule?.sunset_hour ?? 20);
+  };
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging) return;
+    const hour = xToHour(e.clientX);
+    setDragHour(hour);
+  }, [dragging, xToHour]);
+
+  const handlePointerUp = useCallback(() => {
+    if (!dragging || dragHour === null || !schedule) {
+      setDragging(null);
+      setDragHour(null);
+      return;
+    }
+    const sunrise = dragging === "sunrise" ? dragHour : schedule.sunrise_hour;
+    const sunset = dragging === "sunset" ? dragHour : schedule.sunset_hour;
+    if (sunrise < sunset) {
+      saveSchedule(sunrise, sunset);
+    }
+    setDragging(null);
+    setDragHour(null);
+  }, [dragging, dragHour, schedule, saveSchedule]);
+
+  if (!schedule) {
+    return (
+      <div className="rounded-xl p-3 md:p-4 h-full" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
+        <span className="text-sm" style={{ color: "hsl(220, 10%, 40%)" }}>No light schedule</span>
+      </div>
+    );
+  }
+
+  // Use drag values if actively dragging
+  const displaySunrise = dragging === "sunrise" && dragHour !== null ? dragHour : schedule.sunrise_hour;
+  const displaySunset = dragging === "sunset" && dragHour !== null ? dragHour : schedule.sunset_hour;
+
+  const sunriseStart = displaySunrise / 24;
+  const sunriseEnd = (displaySunrise + schedule.sunrise_ramp_min / 60) / 24;
+  const sunsetStart = displaySunset / 24;
+  const sunsetEnd = (displaySunset + schedule.sunset_ramp_min / 60) / 24;
+
+  const isDaytime = progress >= sunriseStart && progress <= sunsetEnd;
+  const dayRange = sunsetEnd - sunriseStart || 1;
+  const dayProgress = isDaytime ? (progress - sunriseStart) / dayRange : 0;
+
   const sunX = arcPadding + dayProgress * arcW;
   const sunY = arcBottom - Math.sin(dayProgress * Math.PI) * arcHeight;
 
-  // Generate arc path points for the gradient fill
   const arcPoints: string[] = [];
   for (let i = 0; i <= 50; i++) {
     const t = i / 50;
@@ -67,18 +120,26 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
     const y = arcBottom - Math.sin(t * Math.PI) * arcHeight;
     arcPoints.push(`${x},${y}`);
   }
-  // Close the path along the bottom
   const arcPath = `M ${arcPadding},${arcBottom} ` +
-    arcPoints.map((p, i) => (i === 0 ? `L ${p}` : `L ${p}`)).join(" ") +
+    arcPoints.map(p => `L ${p}`).join(" ") +
     ` L ${arcPadding + arcW},${arcBottom} Z`;
-
-  // Dashed arc line (just the curve, no fill)
   const arcLinePath = `M ${arcPadding},${arcBottom} ` +
     arcPoints.map(p => `L ${p}`).join(" ");
 
-  const phaseColor = phase === "night" ? "hsl(220, 40%, 30%)" : phase === "day" ? "hsl(48, 95%, 65%)" : "hsl(35, 95%, 55%)";
   const sunSize = brightness > 0 ? 14 : 10;
   const sunGlow = brightness > 50 ? 20 : brightness > 0 ? 12 : 0;
+
+  // Handle positions on horizon
+  const sunriseHandleX = arcPadding;
+  const sunsetHandleX = arcPadding + arcW;
+
+  const formatHour = (h: number) => {
+    const hr = Math.floor(h);
+    const min = Math.round((h - hr) * 60);
+    const ampm = hr < 12 ? "AM" : "PM";
+    const h12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr;
+    return min > 0 ? `${h12}:${min.toString().padStart(2, "0")} ${ampm}` : `${h12} ${ampm}`;
+  };
 
   return (
     <div className="rounded-xl p-3 md:p-4 h-full flex flex-col" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
@@ -93,14 +154,20 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full flex-1" preserveAspectRatio="xMidYMid meet">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        className="w-full flex-1"
+        preserveAspectRatio="xMidYMid meet"
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        style={{ touchAction: "none" }}
+      >
         <defs>
-          {/* Sky gradient */}
           <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={brightness > 50 ? "hsl(200, 80%, 55%)" : brightness > 0 ? "hsl(25, 70%, 35%)" : "hsl(220, 30%, 12%)"} stopOpacity={0.15} />
             <stop offset="100%" stopColor="hsl(220, 20%, 7%)" stopOpacity={0} />
           </linearGradient>
-          {/* Arc fill gradient */}
           <linearGradient id="arcFill" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="hsl(220, 30%, 15%)" stopOpacity={0.3} />
             <stop offset={`${sunriseStart / (sunsetEnd || 1) * 100}%`} stopColor="hsl(35, 90%, 40%)" stopOpacity={0.2} />
@@ -108,7 +175,6 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
             <stop offset={`${sunsetStart / (sunsetEnd || 1) * 100}%`} stopColor="hsl(35, 90%, 40%)" stopOpacity={0.2} />
             <stop offset="100%" stopColor="hsl(220, 30%, 15%)" stopOpacity={0.3} />
           </linearGradient>
-          {/* Sun glow */}
           <radialGradient id="sunGlow">
             <stop offset="0%" stopColor="hsl(48, 95%, 70%)" stopOpacity={0.6} />
             <stop offset="50%" stopColor="hsl(48, 95%, 65%)" stopOpacity={0.2} />
@@ -130,59 +196,76 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
         {/* Dashed arc line */}
         <path d={arcLinePath} fill="none" stroke="hsl(220, 15%, 25%)" strokeWidth="1" strokeDasharray="4 4" />
 
-        {/* Sunrise label */}
-        <text x={arcPadding} y={arcBottom + 15} textAnchor="middle" fontSize="9" fill="hsl(220, 10%, 40%)">
-          {schedule.sunrise_hour}AM
-        </text>
+        {/* Sunrise drag handle */}
+        <g
+          onPointerDown={handlePointerDown("sunrise")}
+          style={{ cursor: "ew-resize" }}
+        >
+          <rect x={sunriseHandleX - 15} y={arcBottom - 15} width={30} height={30} fill="transparent" />
+          <circle cx={sunriseHandleX} cy={arcBottom} r={5} fill={dragging === "sunrise" ? "hsl(35, 95%, 55%)" : "hsl(220, 15%, 30%)"} stroke="hsl(35, 95%, 55%)" strokeWidth={1.5} />
+          <text x={sunriseHandleX} y={arcBottom + 15} textAnchor="middle" fontSize="9"
+            fill={dragging === "sunrise" ? "hsl(35, 95%, 55%)" : "hsl(220, 10%, 40%)"} fontWeight={dragging === "sunrise" ? "bold" : "normal"}>
+            {formatHour(displaySunrise)}
+          </text>
+        </g>
 
-        {/* Sunset label */}
-        <text x={arcPadding + arcW} y={arcBottom + 15} textAnchor="middle" fontSize="9" fill="hsl(220, 10%, 40%)">
-          {schedule.sunset_hour > 12 ? schedule.sunset_hour - 12 : schedule.sunset_hour}PM
-        </text>
+        {/* Sunset drag handle */}
+        <g
+          onPointerDown={handlePointerDown("sunset")}
+          style={{ cursor: "ew-resize" }}
+        >
+          <rect x={sunsetHandleX - 15} y={arcBottom - 15} width={30} height={30} fill="transparent" />
+          <circle cx={sunsetHandleX} cy={arcBottom} r={5} fill={dragging === "sunset" ? "hsl(35, 95%, 55%)" : "hsl(220, 15%, 30%)"} stroke="hsl(35, 95%, 55%)" strokeWidth={1.5} />
+          <text x={sunsetHandleX} y={arcBottom + 15} textAnchor="middle" fontSize="9"
+            fill={dragging === "sunset" ? "hsl(35, 95%, 55%)" : "hsl(220, 10%, 40%)"} fontWeight={dragging === "sunset" ? "bold" : "normal"}>
+            {formatHour(displaySunset)}
+          </text>
+        </g>
 
         {/* Noon label */}
         <text x={svgW / 2} y={arcBottom + 15} textAnchor="middle" fontSize="9" fill="hsl(220, 10%, 35%)">
           12PM
         </text>
 
+        {/* Drag tooltip */}
+        {dragging && dragHour !== null && (
+          <g>
+            <rect x={xToSvg(dragHour) - 25} y={arcBottom - 35} width={50} height={18} rx={4}
+              fill="hsl(35, 95%, 55%)" />
+            <text x={xToSvg(dragHour)} y={arcBottom - 22} textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">
+              {formatHour(dragHour)}
+            </text>
+            <line x1={xToSvg(dragHour)} y1={arcBottom - 17} x2={xToSvg(dragHour)} y2={arcBottom}
+              stroke="hsl(35, 95%, 55%)" strokeWidth={1.5} strokeDasharray="2 2" />
+          </g>
+        )}
+
         {/* Sun/Moon on the arc */}
         {isDaytime ? (
           <g>
-            {/* Glow */}
             {sunGlow > 0 && (
               <circle cx={sunX} cy={sunY} r={sunGlow} fill="url(#sunGlow)">
                 <animate attributeName="r" values={`${sunGlow};${sunGlow + 4};${sunGlow}`} dur="3s" repeatCount="indefinite" />
               </circle>
             )}
-            {/* Sun body */}
             <circle cx={sunX} cy={sunY} r={sunSize} fill="hsl(48, 95%, 65%)" />
-            {/* Sun rays */}
             {brightness > 20 && [0, 45, 90, 135, 180, 225, 270, 315].map(angle => {
               const rad = (angle * Math.PI) / 180;
               const r1 = sunSize + 3;
               const r2 = sunSize + 7;
               return (
-                <line
-                  key={angle}
-                  x1={sunX + Math.cos(rad) * r1}
-                  y1={sunY + Math.sin(rad) * r1}
-                  x2={sunX + Math.cos(rad) * r2}
-                  y2={sunY + Math.sin(rad) * r2}
-                  stroke="hsl(48, 95%, 65%)"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  opacity={brightness / 100}
-                />
+                <line key={angle}
+                  x1={sunX + Math.cos(rad) * r1} y1={sunY + Math.sin(rad) * r1}
+                  x2={sunX + Math.cos(rad) * r2} y2={sunY + Math.sin(rad) * r2}
+                  stroke="hsl(48, 95%, 65%)" strokeWidth="1.5" strokeLinecap="round" opacity={brightness / 100} />
               );
             })}
-            {/* Brightness label near sun */}
             <text x={sunX} y={sunY - sunSize - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill="hsl(48, 95%, 70%)">
               {brightness}%
             </text>
           </g>
         ) : (
           <g>
-            {/* Moon position — show at edges */}
             <circle cx={progress < sunriseStart ? arcPadding - 15 : arcPadding + arcW + 15} cy={arcBottom - 15} r={8} fill="hsl(220, 40%, 55%)" />
             <circle cx={progress < sunriseStart ? arcPadding - 12 : arcPadding + arcW + 18} cy={arcBottom - 18} r={6} fill="hsl(220, 20%, 7%)" />
             <circle cx={progress < sunriseStart ? arcPadding - 15 : arcPadding + arcW + 15} cy={arcBottom - 15} r={14} fill="url(#moonGlow)" />
@@ -200,34 +283,35 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
           </>
         )}
 
-        {/* Real brightness history dots — plotted on the arc based on actual light values */}
+        {/* Real brightness history dots */}
         {readings.filter(r => r.light !== undefined && r.light > 0).map((r, i) => {
           const d = new Date(r.ts);
           const hourFrac = (d.getHours() + d.getMinutes() / 60) / 24;
-          // Only plot if within the day range
           if (hourFrac < sunriseStart || hourFrac > sunsetEnd) return null;
           const t = (hourFrac - sunriseStart) / dayRange;
           const x = arcPadding + t * arcW;
-          // Y based on actual brightness (0=horizon, 100=top of arc)
           const maxY = Math.sin(t * Math.PI) * arcHeight;
           const y = arcBottom - (r.light! / 100) * maxY;
-          return (
-            <circle key={i} cx={x} cy={y} r={2} fill="hsl(48, 95%, 65%)" opacity={0.6} />
-          );
+          return <circle key={i} cx={x} cy={y} r={2} fill="hsl(48, 95%, 65%)" opacity={0.6} />;
         })}
       </svg>
 
       {/* Ramp info */}
       <div className="flex justify-between mt-1 text-[10px]" style={{ color: "hsl(220, 10%, 40%)" }}>
-        <span>🌅 Sunrise {schedule.sunrise_ramp_min}min ramp</span>
+        <span>🌅 {schedule.sunrise_ramp_min}min ramp</span>
         <span className="text-[10px] px-2 py-0.5 rounded-full" style={{
           background: phase === "day" ? "hsl(48, 95%, 65%, 0.1)" : phase === "night" ? "hsl(220, 30%, 20%, 0.5)" : "hsl(35, 95%, 55%, 0.1)",
           color: phase === "day" ? "hsl(48, 95%, 65%)" : phase === "night" ? "hsl(220, 40%, 55%)" : "hsl(35, 95%, 55%)",
         }}>
           {phase === "day" ? "☀ Daytime" : phase === "night" ? "🌙 Night" : phase === "sunrise" ? "🌅 Sunrise" : "🌇 Sunset"}
         </span>
-        <span>🌇 Sunset {schedule.sunset_ramp_min}min ramp</span>
+        <span>🌇 {schedule.sunset_ramp_min}min ramp</span>
       </div>
     </div>
   );
+
+  // Helper: convert hour to SVG X coordinate
+  function xToSvg(hour: number): number {
+    return arcPadding + (hour / 24) * arcW;
+  }
 }

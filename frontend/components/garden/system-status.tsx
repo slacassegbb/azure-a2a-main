@@ -33,27 +33,6 @@ export default function SystemStatus({ data }: SystemStatusProps) {
       color: "hsl(185, 90%, 55%)",
     },
     {
-      label: "Valve A",
-      status: "Water",
-      active: lastValve === "a",
-      icon: Droplets,
-      color: "hsl(185, 90%, 55%)",
-    },
-    {
-      label: "Valve B",
-      status: "Grow",
-      active: lastValve === "b",
-      icon: FlaskConical,
-      color: "hsl(152, 75%, 50%)",
-    },
-    {
-      label: "Valve C",
-      status: "Bloom",
-      active: lastValve === "c",
-      icon: Flower2,
-      color: "hsl(330, 80%, 65%)",
-    },
-    {
       label: "Fan",
       status: fanOn ? `${fanSpeed}%` : "Off",
       active: fanOn,
@@ -81,7 +60,7 @@ export default function SystemStatus({ data }: SystemStatusProps) {
       <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>
         System Status
       </span>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+      <div className="grid grid-cols-2 gap-2 mt-3">
         {pills.map((pill) => {
           const Icon = pill.icon;
           return (

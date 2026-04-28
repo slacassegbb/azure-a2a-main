@@ -111,6 +111,7 @@ int activeValvePin = -1;
 String lastFanRequestId = "";
 unsigned long lastFanPollMs = 0;
 bool fanOn = false;
+int fanSpeed = 100;  // current fan speed (1-100)
 unsigned long fanAutoOffAtMs = 0;  // 0 = no timer, otherwise millis() at which to turn off
 // Default schedule: sunrise 6am (30min ramp), full sun, sunset 8pm (30min ramp), off at night
 int schedSunriseHour = 6;
@@ -628,6 +629,7 @@ void pollFanCommand() {
 
   kasaSetFan(stateOn, speed);
   fanOn = stateOn;
+  fanSpeed = speed;
   fanAutoOffAtMs = (stateOn && durationMin > 0) ? (millis() + (unsigned long)durationMin * 60000UL) : 0;
 }
 
@@ -736,7 +738,8 @@ void uploadMoistureData() {
 
   String newEntry = "{\"ts\":\"" + String(isoBuf) + "\",\"raw\":" + String(lastMoistureRaw) + ",\"pct\":" + String(moisturePct)
                   + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "")
-                  + ",\"light\":" + String(constrain(currentBrightness, 0, 100)) + "}";
+                  + ",\"light\":" + String(constrain(currentBrightness, 0, 100))
+                  + ",\"fan\":" + String(fanOn ? fanSpeed : 0) + "}";
 
   // Download existing history
   String existing = downloadBlob(String(MOISTURE_BLOB_NAME));

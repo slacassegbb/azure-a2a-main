@@ -69,6 +69,55 @@ export async function POST(request: NextRequest) {
         await writeBlob("light-schedule.json", schedule);
         return NextResponse.json({ success: true, request_id: requestId, message: `Light ${body.state ? "ON" : "OFF"}` });
       }
+      case "set_light_schedule": {
+        const clientLS = BlobServiceClient.fromConnectionString(CONN_STR);
+        const containerLS = clientLS.getContainerClient(CONTAINER);
+        let scheduleLS: any = {};
+        try {
+          const response = await containerLS.getBlobClient("light-schedule.json").download(0);
+          const chunks: Buffer[] = [];
+          for await (const chunk of response.readableStreamBody as any) chunks.push(Buffer.from(chunk));
+          scheduleLS = JSON.parse(Buffer.concat(chunks).toString());
+        } catch { /* defaults */ }
+        scheduleLS.request_id = requestId;
+        if (body.sunrise_hour !== undefined) scheduleLS.sunrise_hour = body.sunrise_hour;
+        if (body.sunset_hour !== undefined) scheduleLS.sunset_hour = body.sunset_hour;
+        await writeBlob("light-schedule.json", scheduleLS);
+        return NextResponse.json({ success: true, request_id: requestId, message: `Schedule updated: sunrise ${scheduleLS.sunrise_hour}h, sunset ${scheduleLS.sunset_hour}h` });
+      }
+      case "set_humidifier": {
+        // Route through backend to gardening agent
+        const { action: humAction = "status", target_humidity } = body;
+        const backendUrl = "https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io";
+        const query = humAction === "off"
+          ? "Use the control_humidifier tool to turn off the humidifier"
+          : target_humidity
+          ? `Use the control_humidifier tool to set humidifier to auto mode targeting ${target_humidity}% humidity`
+          : "Use the control_humidifier tool to turn on the humidifier";
+        try {
+          const loginRes = await fetch(`${backendUrl}/api/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: "test@example.com", password: "test123" }),
+          });
+          const { access_token } = await loginRes.json();
+          const queryRes = await fetch(`${backendUrl}/api/query`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${access_token}` },
+            body: JSON.stringify({
+              query,
+              user_id: "user_3",
+              session_id: "user_3",
+              enable_routing: true,
+              activated_agents: ["Home Gardening Agent"],
+            }),
+          });
+          const result = await queryRes.json();
+          return NextResponse.json({ success: true, message: result.result || "Humidifier command sent" });
+        } catch (e: any) {
+          return NextResponse.json({ success: false, message: `Failed: ${e.message}` });
+        }
+      }
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
     }

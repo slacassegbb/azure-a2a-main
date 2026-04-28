@@ -35,6 +35,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
   const [showTemp, setShowTemp] = useState(true);
   const [showLight, setShowLight] = useState(true);
   const [showHumidity, setShowHumidity] = useState(true);
+  const [showFan, setShowFan] = useState(true);
 
   if (readings.length < 3) {
     return (
@@ -64,6 +65,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
       temp: (r as any).temp_c ?? null,
       light: schedule ? Math.round(getBrightnessAtTime(schedule, r.ts)) : null,
       humidity: h ?? lastHumidity,
+      fan: (r as any).fan ?? null,
     };
   });
 
@@ -118,6 +120,17 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
           >
             Humidity
           </button>
+          <button
+            onClick={() => setShowFan(!showFan)}
+            className="text-[10px] px-2 py-1 rounded-md font-medium transition-all"
+            style={{
+              background: showFan ? "hsl(185, 70%, 55%, 0.15)" : "hsl(220, 15%, 13%)",
+              color: showFan ? "hsl(185, 70%, 55%)" : "hsl(220, 10%, 40%)",
+              border: `1px solid ${showFan ? "hsl(185, 70%, 55%, 0.3)" : "hsl(220, 15%, 18%)"}`,
+            }}
+          >
+            Fan
+          </button>
         </div>
       </div>
 
@@ -139,6 +152,10 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
             <linearGradient id="humidityGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="hsl(270, 70%, 65%)" stopOpacity={0.25} />
               <stop offset="100%" stopColor="hsl(270, 70%, 65%)" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="fanGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(185, 70%, 55%)" stopOpacity={0.2} />
+              <stop offset="100%" stopColor="hsl(185, 70%, 55%)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 14%)" />
@@ -209,6 +226,18 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
               fill="url(#humidityGrad)"
               dot={false}
               name="Humidity %"
+              connectNulls
+            />
+          )}
+          {showFan && (
+            <Area
+              type="stepAfter"
+              dataKey="fan"
+              stroke="hsl(185, 70%, 55%)"
+              strokeWidth={1.5}
+              fill="url(#fanGrad)"
+              dot={false}
+              name="Fan %"
               connectNulls
             />
           )}
