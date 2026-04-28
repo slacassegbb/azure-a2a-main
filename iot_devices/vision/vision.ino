@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <Preferences.h>
+#include <ArduinoOTA.h>
 #include "FS.h"
 #include "SD_MMC.h"
 #include <ESPmDNS.h>
@@ -593,22 +594,23 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 10000000;
-  config.frame_size = FRAMESIZE_SVGA;
+  config.frame_size = FRAMESIZE_UXGA;     // 1600x1200 (2MP) — max resolution
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = 8;                // Higher quality (lower = better, 0-63)
   config.fb_count = 1;
 
   if (psramFound()) {
-    config.jpeg_quality = 10;
+    config.jpeg_quality = 6;              // Best quality with PSRAM
     config.fb_count = 2;
     config.grab_mode = CAMERA_GRAB_LATEST;
-    Serial.println("PSRAM FOUND");
+    Serial.println("PSRAM FOUND — using UXGA (1600x1200) quality 6");
   } else {
-    config.frame_size = FRAMESIZE_HVGA;
+    config.frame_size = FRAMESIZE_SVGA;   // Fall back to 800x600 without PSRAM
     config.fb_location = CAMERA_FB_IN_DRAM;
-    Serial.println("NO PSRAM FOUND");
+    config.jpeg_quality = 10;
+    Serial.println("NO PSRAM — using SVGA (800x600)");
   }
 
   esp_err_t err = esp_camera_init(&config);
@@ -619,8 +621,14 @@ void setup() {
 
   sensor_t *s = esp_camera_sensor_get();
   s->set_vflip(s, 1);
-  s->set_brightness(s, 1);
-  s->set_saturation(s, -1);
+  s->set_brightness(s, 1);      // slightly bright for grow light environment
+  s->set_contrast(s, 1);        // boost contrast to cut through haze
+  s->set_saturation(s, 0);      // neutral saturation
+  s->set_sharpness(s, 2);       // sharpen for plant detail
+  s->set_exposure_ctrl(s, 1);   // auto exposure on
+  s->set_aec2(s, 1);            // advanced auto exposure
+  s->set_ae_level(s, 0);        // neutral exposure
+  s->set_gainceiling(s, (gainceiling_t)6);  // moderate gain ceiling
 
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
@@ -634,8 +642,20 @@ void setup() {
   Serial.print("Local IP: ");
   Serial.println(WiFi.localIP());
 
+  // Turn off onboard LED
+  pinMode(3, OUTPUT);
+  digitalWrite(3, LOW);
+
   initMDNS();
   syncClock();
+
+  // OTA (Over-The-Air) updates — flash wirelessly from Arduino IDE
+  ArduinoOTA.setHostname("esp32-vision");
+  ArduinoOTA.onStart([]() { Serial.println("[OTA] Update starting..."); });
+  ArduinoOTA.onEnd([]() { Serial.println("[OTA] Update complete! Rebooting..."); });
+  ArduinoOTA.onError([](ota_error_t error) { Serial.printf("[OTA] Error %u\n", error); });
+  ArduinoOTA.begin();
+  Serial.println("OTA enabled: esp32-vision");
 
   if (!initSDCard()) {
     Serial.println("WARNING: SD init failed. Still images will not be saved by the server file.");
@@ -694,6 +714,9 @@ void loop() {
 
   // Watchdog — reboot if stuck or after 6 hours
   checkWatchdog();
+
+  // Handle OTA updates
+  ArduinoOTA.handle();
 
   delay(1000);
 }

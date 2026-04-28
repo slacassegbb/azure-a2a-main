@@ -95,4 +95,5 @@ export interface GardenDashboardData {
   garden_log: GardenLogEntry[];
   photos: GardenPhoto[];
   humidifier: HumidifierStatus | null;
+  events: GardenEvent[];
 }

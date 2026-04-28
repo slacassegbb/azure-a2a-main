@@ -43,6 +43,8 @@ LIGHT_SCHEDULE_BLOB_NAME = "light-schedule.json"
 FAN_COMMAND_BLOB_NAME = "fan-command.json"
 HUMIDIFIER_STATUS_BLOB_NAME = "humidifier-status.json"
 GARDEN_CONFIG_BLOB_PREFIX = "garden-config"  # garden-config-{user_id}.json
+GARDEN_EVENTS_BLOB_NAME = "garden-events.json"
+MAX_GARDEN_EVENTS = 200  # ~2 weeks of events
 VALVE_COMMAND_BLOB_NAME = "valve-command.json"
 GARDEN_LOG_BLOB_PREFIX = "garden-log"  # becomes garden-log-{user_id}.json
 MAX_LOG_ENTRIES = 50  # keep last ~6 days at 3-hour intervals
@@ -328,6 +330,7 @@ class FoundryGardeningAgent:
             content_settings=ContentSettings(content_type="application/json"),
         )
         logger.info(f"Irrigation command sent: {request_id}, duration: {duration_ms}ms")
+        self._append_garden_event("irrigate", f"pump {duration_ms // 1000}s")
         return request_id, duration_ms
 
     # ── On-demand capture control ────────────────────────────────────────
@@ -441,6 +444,7 @@ class FoundryGardeningAgent:
             content_settings=ContentSettings(content_type="application/json"),
         )
         logger.info(f"Light schedule updated: {request_id}")
+        self._append_garden_event("light", f"peak={current.get('peak_brightness')}% sunrise={current.get('sunrise_hour')}h sunset={current.get('sunset_hour')}h")
         return request_id, current
 
     # ── Fan control ────────────────────────────────────────────────────
@@ -462,6 +466,7 @@ class FoundryGardeningAgent:
             content_settings=ContentSettings(content_type="application/json"),
         )
         logger.info(f"Fan command sent: {request_id} state={state} speed={speed}% duration={duration_min}min")
+        self._append_garden_event("fan", f"{'ON ' + str(speed) + '%' if state else 'OFF'}")
         return request_id
 
     def _trigger_valve_irrigation(self, valve: str, duration_seconds: int = 120) -> str:
@@ -535,6 +540,42 @@ class FoundryGardeningAgent:
         for e in recent:
             lines.append(f"- **{e.get('timestamp', '?')}**: {e.get('summary', '')}")
         return "\n".join(lines)
+
+    # ── Garden events (persistent, append-only) ────────────────────────
+    def _append_garden_event(self, event_type: str, detail: str = ""):
+        """Append an event to the persistent garden events blob."""
+        try:
+            client = self._get_iot_blob_client()
+            container = _env("IOT_BLOB_CONTAINER", "garden-images")
+            blob = client.get_blob_client(container=container, blob=GARDEN_EVENTS_BLOB_NAME)
+
+            # Read existing events
+            events = []
+            try:
+                raw = blob.download_blob().readall()
+                events = json.loads(raw).get("events", [])
+            except Exception:
+                pass
+
+            # Append new event
+            events.append({
+                "ts": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "type": event_type,
+                "detail": detail,
+            })
+
+            # Trim to max
+            if len(events) > MAX_GARDEN_EVENTS:
+                events = events[-MAX_GARDEN_EVENTS:]
+
+            blob.upload_blob(
+                json.dumps({"events": events}),
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/json"),
+            )
+            logger.info(f"Garden event recorded: {event_type} {detail}")
+        except Exception as e:
+            logger.warning(f"Failed to record garden event: {e}")
 
     # ── Garden config ─────────────────────────────────────────────────
     def _read_garden_config(self, user_id: str = "default") -> str:
@@ -1296,6 +1337,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 request_id = await asyncio.to_thread(self._trigger_valve_irrigation, valve, duration_s)
                 valve_names = {"a": "plain water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
                 valve_name = valve_names.get(valve, valve)
+                self._append_garden_event("valve", f"Valve {valve.upper()} ({valve_name}) {duration_s}s")
                 return f"Valve irrigation started (request: {request_id}). Valve {valve.upper()} ({valve_name}) + pump running for {duration_s} seconds.", images_data
             except Exception as e:
                 return f"Failed to trigger valve irrigation: {e}", images_data

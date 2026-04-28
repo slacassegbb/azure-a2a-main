@@ -154,7 +154,7 @@ export default function GardenDashboard() {
         </div>
 
         {/* Historical Charts */}
-        <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={moisture?.events || []} />
+        <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={data?.events || []} />
       </main>
     </div>
   );

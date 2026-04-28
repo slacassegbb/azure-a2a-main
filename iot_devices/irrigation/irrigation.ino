@@ -784,18 +784,13 @@ void uploadMoistureData() {
     entryCount--;
   }
 
-  // Events: only write pending events, don't try to parse from existing blob
-  String events = pendingEvents;
-  pendingEvents = "";
-
   // Build final JSON
   String json = "{\"current\":{\"raw\":" + String(lastMoistureRaw)
               + ",\"pct\":" + String(moisturePct)
               + ",\"temp_c\":" + String(lastTempC, 1)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
-              + "},\"readings\":[" + readings
-              + "]" + (events.length() > 0 ? ",\"events\":[" + events + "]" : "") + "}";
+              + "},\"readings\":[" + readings + "]}";
 
   if (uploadJsonToBlob(String(MOISTURE_BLOB_NAME), json)) {
     Serial.println("[MOISTURE] Uploaded to blob (" + String(moisturePct) + "%)");
