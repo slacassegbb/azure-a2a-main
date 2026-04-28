@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Camera, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Camera, X, ChevronLeft, ChevronRight, Play, Square } from "lucide-react";
 import { formatTimeAgo } from "@/lib/garden/calculations";
 import { GardenPhoto } from "@/lib/garden/types";
 
@@ -23,10 +23,55 @@ function formatPhotoDate(name: string): string {
 export default function CameraFeed({ url, timestamp, photos = [] }: CameraFeedProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
   const stripRef = useRef<HTMLDivElement>(null);
+  const playRef = useRef<NodeJS.Timeout | null>(null);
+  const prevTimestampRef = useRef(timestamp);
   const isRecent = timestamp ? (Date.now() - new Date(timestamp).getTime()) < 5 * 60 * 1000 : false;
 
-  // The displayed image — either live or a selected historical photo
+  // Auto-return to live when new image arrives
+  useEffect(() => {
+    if (timestamp && timestamp !== prevTimestampRef.current) {
+      prevTimestampRef.current = timestamp;
+      if (selectedPhoto !== null && !playing) {
+        setSelectedPhoto(null); // snap back to live
+      }
+    }
+  }, [timestamp, selectedPhoto, playing]);
+
+  // Slideshow logic
+  const startSlideshow = useCallback(() => {
+    if (photos.length < 2) return;
+    setPlaying(true);
+    // Start from oldest (last in array since photos are newest-first)
+    setSelectedPhoto(photos.length - 1);
+  }, [photos]);
+
+  const stopSlideshow = useCallback(() => {
+    setPlaying(false);
+    if (playRef.current) clearInterval(playRef.current);
+    playRef.current = null;
+    setSelectedPhoto(null); // back to live
+  }, []);
+
+  useEffect(() => {
+    if (!playing) return;
+    playRef.current = setInterval(() => {
+      setSelectedPhoto(prev => {
+        if (prev === null || prev <= 0) {
+          // Reached newest photo — stop and go back to live
+          setTimeout(stopSlideshow, 1500);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1500);
+    return () => {
+      if (playRef.current) clearInterval(playRef.current);
+    };
+  }, [playing, stopSlideshow]);
+
+  // The displayed image
   const displayUrl = selectedPhoto !== null && photos[selectedPhoto] ? photos[selectedPhoto].url : url;
   const displayTimestamp = selectedPhoto !== null && photos[selectedPhoto] ? photos[selectedPhoto].timestamp : timestamp;
   const isLive = selectedPhoto === null;
@@ -46,9 +91,8 @@ export default function CameraFeed({ url, timestamp, photos = [] }: CameraFeedPr
           <img
             src={displayUrl}
             alt="Garden camera"
-            className="w-full h-full object-cover cursor-pointer transition-opacity duration-300"
-            onClick={() => setFullscreen(true)}
-            key={displayUrl}
+            className="w-full h-full object-cover cursor-pointer"
+            onClick={() => !playing && setFullscreen(true)}
           />
         ) : (
           <div className="w-full h-full min-h-[200px] flex flex-col items-center justify-center gap-3" style={{ color: "hsl(220, 10%, 35%)" }}>
@@ -60,14 +104,21 @@ export default function CameraFeed({ url, timestamp, photos = [] }: CameraFeedPr
         {/* Top overlays */}
         {displayUrl && (
           <>
-            {isLive && isRecent && (
+            {isLive && isRecent && !playing && (
               <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wider"
                 style={{ background: "hsla(0, 0%, 0%, 0.5)", backdropFilter: "blur(8px)" }}>
                 <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "hsl(152, 75%, 50%)" }} />
                 <span style={{ color: "hsl(152, 75%, 50%)" }}>Live</span>
               </div>
             )}
-            {!isLive && (
+            {playing && (
+              <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wider"
+                style={{ background: "hsla(0, 0%, 0%, 0.5)", backdropFilter: "blur(8px)" }}>
+                <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "hsl(48, 95%, 65%)" }} />
+                <span style={{ color: "hsl(48, 95%, 65%)" }}>Timelapse</span>
+              </div>
+            )}
+            {!isLive && !playing && (
               <button
                 className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wider cursor-pointer"
                 style={{ background: "hsla(0, 0%, 0%, 0.5)", backdropFilter: "blur(8px)", color: "hsl(185, 90%, 55%)" }}
@@ -88,15 +139,17 @@ export default function CameraFeed({ url, timestamp, photos = [] }: CameraFeedPr
         {/* Photo filmstrip overlay at bottom */}
         {photos.length > 0 && (
           <div className="absolute bottom-0 left-0 right-0" style={{ background: "linear-gradient(transparent, hsla(0,0%,0%,0.8) 30%)" }}>
-            <div className="relative px-6 py-2">
-              {/* Scroll buttons */}
+            <div className="relative px-8 py-2">
+              {/* Play/Stop button */}
               <button
-                className="absolute left-0 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full z-10"
-                style={{ background: "hsla(0,0%,0%,0.5)" }}
-                onClick={() => scrollStrip(-1)}
+                className="absolute left-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full z-10 transition-colors"
+                style={{ background: playing ? "hsl(0, 70%, 50%, 0.6)" : "hsla(0,0%,0%,0.5)" }}
+                onClick={playing ? stopSlideshow : startSlideshow}
               >
-                <ChevronLeft className="w-3 h-3 text-white/70" />
+                {playing ? <Square className="w-3 h-3 text-white" /> : <Play className="w-3 h-3 text-white ml-0.5" />}
               </button>
+
+              {/* Scroll right button */}
               <button
                 className="absolute right-0 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full z-10"
                 style={{ background: "hsla(0,0%,0%,0.5)" }}
@@ -115,7 +168,7 @@ export default function CameraFeed({ url, timestamp, photos = [] }: CameraFeedPr
                   <div
                     key={photo.name}
                     className="shrink-0 cursor-pointer transition-all"
-                    onClick={() => setSelectedPhoto(selectedPhoto === i ? null : i)}
+                    onClick={() => { if (!playing) setSelectedPhoto(selectedPhoto === i ? null : i); }}
                   >
                     <div
                       className="w-16 h-12 md:w-20 md:h-14 xl:w-24 xl:h-16 rounded overflow-hidden transition-all"
