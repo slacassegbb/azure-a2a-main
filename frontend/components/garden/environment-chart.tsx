@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
-import { MoistureReading, LightSchedule, HumidityReading, GardenEvent } from "@/lib/garden/types";
+import { MoistureReading, LightSchedule, HumidityReading, GardenEvent, GardenConfig } from "@/lib/garden/types";
 import { getCurrentBrightness } from "@/lib/garden/calculations";
 
 interface EnvironmentChartProps {
@@ -10,6 +10,7 @@ interface EnvironmentChartProps {
   schedule: LightSchedule | null | undefined;
   humidityReadings?: HumidityReading[];
   events?: GardenEvent[];
+  gardenConfig?: GardenConfig | null;
 }
 
 function formatTime(ts: string): string {
@@ -30,12 +31,13 @@ function getBrightnessAtTime(schedule: LightSchedule, ts: string): number {
   return schedule.peak_brightness - (schedule.peak_brightness - schedule.night_brightness) * (minutes - sunsetStart) / schedule.sunset_ramp_min;
 }
 
-export default function EnvironmentChart({ readings, schedule, humidityReadings = [], events = [] }: EnvironmentChartProps) {
+export default function EnvironmentChart({ readings, schedule, humidityReadings = [], events = [], gardenConfig }: EnvironmentChartProps) {
   const [showMoisture, setShowMoisture] = useState(true);
   const [showTemp, setShowTemp] = useState(true);
   const [showLight, setShowLight] = useState(true);
   const [showHumidity, setShowHumidity] = useState(true);
   const [showFan, setShowFan] = useState(true);
+  const [showWeight, setShowWeight] = useState(true);
 
   if (readings.length < 3) {
     return (
@@ -52,12 +54,24 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
     humidityMap.set(key, h.humidity);
   });
 
+  // Compute dry/wet thresholds from first calibrated pot (if any)
+  const pot = gardenConfig?.pots?.find(p => p.dry_weight_g != null && p.wet_weight_g != null);
+  const dryG = pot?.dry_weight_g ?? null;
+  const wetG = pot?.wet_weight_g ?? null;
+  const hasWeightCal = dryG != null && wetG != null && wetG > dryG;
+
   // Take last 96 readings (~8 hours at 5-min intervals)
   let lastHumidity: number | null = null;
   const chartData = readings.slice(-96).map(r => {
     const key = r.ts.slice(0, 16);
     const h = humidityMap.get(key) ?? null;
     if (h !== null) lastHumidity = h;
+    const wg = (r as any).weight_g ?? null;
+    let waterPct: number | null = null;
+    if (wg != null && hasWeightCal) {
+      const capacity = wetG - dryG;
+      waterPct = Math.min(100, Math.max(0, Math.round(((wg - dryG) / capacity) * 100)));
+    }
     return {
       time: formatTime(r.ts),
       ts: r.ts,
@@ -66,6 +80,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
       light: schedule ? Math.round(getBrightnessAtTime(schedule, r.ts)) : null,
       humidity: h ?? lastHumidity,
       fan: (r as any).fan ?? null,
+      water: waterPct,
     };
   });
 
@@ -131,6 +146,17 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
           >
             Fan
           </button>
+          <button
+            onClick={() => setShowWeight(!showWeight)}
+            className="text-[10px] px-2 py-1 rounded-md font-medium transition-all"
+            style={{
+              background: showWeight ? "hsl(152, 75%, 50%, 0.15)" : "hsl(220, 15%, 13%)",
+              color: showWeight ? "hsl(152, 75%, 50%)" : "hsl(220, 10%, 40%)",
+              border: `1px solid ${showWeight ? "hsl(152, 75%, 50%, 0.3)" : "hsl(220, 15%, 18%)"}`,
+            }}
+          >
+            Pot 1
+          </button>
         </div>
       </div>
 
@@ -156,6 +182,10 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
             <linearGradient id="fanGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="hsl(185, 70%, 55%)" stopOpacity={0.2} />
               <stop offset="100%" stopColor="hsl(185, 70%, 55%)" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="weightGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(152, 75%, 50%)" stopOpacity={0.25} />
+              <stop offset="100%" stopColor="hsl(152, 75%, 50%)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 14%)" />
@@ -238,6 +268,18 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
               fill="url(#fanGrad)"
               dot={false}
               name="Fan %"
+              connectNulls
+            />
+          )}
+          {showWeight && (
+            <Area
+              type="monotone"
+              dataKey="water"
+              stroke="hsl(152, 75%, 50%)"
+              strokeWidth={2}
+              fill="url(#weightGrad)"
+              dot={false}
+              name="Pot 1"
               connectNulls
             />
           )}

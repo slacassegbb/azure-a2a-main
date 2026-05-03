@@ -3,7 +3,7 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        curl ca-certificates apt-transport-https lsb-release gnupg \
+        curl ca-certificates apt-transport-https lsb-release gnupg ffmpeg \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && rm -rf /var/lib/apt/lists/*
 

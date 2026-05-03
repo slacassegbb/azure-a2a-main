@@ -1,6 +1,6 @@
 "use client";
 
-import { Droplets, Fan, Lightbulb, Waves, FlaskConical, Flower2, CloudRain } from "lucide-react";
+import { Droplets, Fan, Lightbulb, Waves, FlaskConical, Flower2, CloudRain, Scale } from "lucide-react";
 import { GardenDashboardData } from "@/lib/garden/types";
 import { getCurrentBrightness } from "@/lib/garden/calculations";
 
@@ -23,6 +23,7 @@ export default function SystemStatus({ data }: SystemStatusProps) {
   const lightBrightness = data?.light_schedule ? getCurrentBrightness(data.light_schedule) : 0;
   const lastValve = data?.valve?.valve || null;
   const humidifierOn = data?.humidifier?.current?.is_on || false;
+  const weightG = data?.moisture?.current?.weight_g ?? null;
 
   const pills: StatusPill[] = [
     {
@@ -52,6 +53,13 @@ export default function SystemStatus({ data }: SystemStatusProps) {
       active: humidifierOn,
       icon: CloudRain,
       color: "hsl(270, 70%, 65%)",
+    },
+    {
+      label: "Scale",
+      status: weightG != null ? `${weightG.toFixed(0)}g` : "N/A",
+      active: weightG != null && weightG > 0,
+      icon: Scale,
+      color: "hsl(152, 75%, 50%)",
     },
   ];
 

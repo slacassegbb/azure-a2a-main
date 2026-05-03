@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-FRONTEND_PATH="frontend_light"
+FRONTEND_PATH="frontend_mobile"
 
 echo -e "${CYAN}🎙️  Deploying Frontend Light (Voice UI)${NC}"
 echo -e "${CYAN}=========================================${NC}"
@@ -112,11 +112,14 @@ echo ""
 # Read Azure AI Foundry configuration
 echo -e "${CYAN}🔑 Reading Azure AI Configuration${NC}"
 
-# Try to read from frontend_light/.env.local first, then .env
+# Try to read from frontend_mobile/.env.local first, then .env
 if [ -f "$FRONTEND_PATH/.env.local" ]; then
     AZURE_AI_ENDPOINT=$(grep "NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     VOICE_MODEL=$(grep "NEXT_PUBLIC_VOICE_MODEL" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-    AZURE_OPENAI_GPT_API_KEY=$(grep "AZURE_OPENAI_GPT_API_KEY" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    AZURE_OPENAI_GPT_API_KEY=$(grep "^AZURE_OPENAI_GPT_API_KEY" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    AZURE_VOICE_API_KEY=$(grep "^AZURE_VOICE_API_KEY" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    VOICE_HOST=$(grep "NEXT_PUBLIC_VOICE_HOST" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    VOICE_DEPLOYMENT=$(grep "NEXT_PUBLIC_VOICE_DEPLOYMENT" "$FRONTEND_PATH/.env.local" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 elif [ -f ".env" ]; then
     AZURE_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     VOICE_MODEL=${VOICE_MODEL:-"gpt-realtime"}
@@ -124,6 +127,7 @@ fi
 
 # Set defaults
 VOICE_MODEL=${VOICE_MODEL:-"gpt-realtime"}
+VOICE_DEPLOYMENT=${VOICE_DEPLOYMENT:-"gpt-realtime"}
 
 if [ -z "$AZURE_AI_ENDPOINT" ]; then
     echo -e "${YELLOW}⚠️  No Azure AI endpoint found in .env files${NC}"
@@ -135,11 +139,21 @@ if [ -z "$AZURE_OPENAI_GPT_API_KEY" ]; then
     read -p "Azure OpenAI GPT API Key: " AZURE_OPENAI_GPT_API_KEY
 fi
 
+# Use AZURE_VOICE_API_KEY if set, otherwise fall back to GPT key
+AZURE_VOICE_API_KEY=${AZURE_VOICE_API_KEY:-$AZURE_OPENAI_GPT_API_KEY}
+
+if [ -z "$VOICE_HOST" ]; then
+    echo -e "${YELLOW}⚠️  No Voice Host found in .env files${NC}"
+    read -p "Azure Voice Host (e.g. yourname.openai.azure.com): " VOICE_HOST
+fi
+
 echo -e "${GREEN}✅ Using configuration:${NC}"
 echo -e "${WHITE}  Backend API: $BACKEND_URL${NC}"
 echo -e "${WHITE}  AI Endpoint: $AZURE_AI_ENDPOINT${NC}"
+echo -e "${WHITE}  Voice Host:  $VOICE_HOST${NC}"
 echo -e "${WHITE}  Voice Model: $VOICE_MODEL${NC}"
-echo -e "${WHITE}  API Key: ****${AZURE_OPENAI_GPT_API_KEY: -4}${NC}"
+echo -e "${WHITE}  GPT Key:     ****${AZURE_OPENAI_GPT_API_KEY: -4}${NC}"
+echo -e "${WHITE}  Voice Key:   ****${AZURE_VOICE_API_KEY: -4}${NC}"
 echo ""
 
 # Login to ACR
@@ -158,10 +172,11 @@ IMAGE_LATEST="$ACR_NAME.azurecr.io/$CONTAINER_NAME:latest"
 docker buildx build --platform linux/amd64 \
     -f "$FRONTEND_PATH/Dockerfile" \
     --build-arg NEXT_PUBLIC_A2A_API_URL="$BACKEND_URL" \
+    --build-arg NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" \
     --build-arg NEXT_PUBLIC_WEBSOCKET_URL="$WEBSOCKET_URL" \
-    --build-arg NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$AZURE_AI_ENDPOINT" \
-    --build-arg NEXT_PUBLIC_VOICE_MODEL="$VOICE_MODEL" \
-    --build-arg AZURE_OPENAI_GPT_API_KEY="$AZURE_OPENAI_GPT_API_KEY" \
+    --build-arg NEXT_PUBLIC_VOICE_HOST="$VOICE_HOST" \
+    --build-arg NEXT_PUBLIC_VOICE_DEPLOYMENT="$VOICE_DEPLOYMENT" \
+    --build-arg NEXT_PUBLIC_DEV_MODE="false" \
     -t "$IMAGE_NAME" \
     -t "$IMAGE_LATEST" \
     --load "$FRONTEND_PATH"
@@ -201,6 +216,10 @@ if [ -n "$APP_EXISTS" ]; then
         --image "$IMAGE_NAME" \
         --set-env-vars \
             "AZURE_OPENAI_GPT_API_KEY=$AZURE_OPENAI_GPT_API_KEY" \
+            "AZURE_VOICE_API_KEY=$AZURE_VOICE_API_KEY" \
+            "NEXT_PUBLIC_VOICE_HOST=$VOICE_HOST" \
+            "NEXT_PUBLIC_VOICE_DEPLOYMENT=$VOICE_DEPLOYMENT" \
+            "NEXT_PUBLIC_WEBSOCKET_URL=$WEBSOCKET_URL" \
         --output none
 else
     echo -e "${YELLOW}  Creating new app...${NC}"
@@ -223,6 +242,10 @@ else
         --memory 1.0Gi \
         --env-vars \
             "AZURE_OPENAI_GPT_API_KEY=$AZURE_OPENAI_GPT_API_KEY" \
+            "AZURE_VOICE_API_KEY=$AZURE_VOICE_API_KEY" \
+            "NEXT_PUBLIC_VOICE_HOST=$VOICE_HOST" \
+            "NEXT_PUBLIC_VOICE_DEPLOYMENT=$VOICE_DEPLOYMENT" \
+            "NEXT_PUBLIC_WEBSOCKET_URL=$WEBSOCKET_URL" \
         --output none
 fi
 

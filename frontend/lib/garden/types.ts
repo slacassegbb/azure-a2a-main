@@ -5,6 +5,7 @@ export interface MoistureReading {
   temp_c?: number;
   light?: number;
   fan?: number;
+  weight_g?: number;
 }
 
 export interface GardenEvent {
@@ -18,6 +19,7 @@ export interface MoistureData {
     raw: number;
     pct: number;
     temp_c: number | null;
+    weight_g: number | null;
     timestamp: string;
     irrigating: boolean;
   };
@@ -97,4 +99,26 @@ export interface GardenDashboardData {
   photos: GardenPhoto[];
   humidifier: HumidifierStatus | null;
   events: GardenEvent[];
+  garden_config: GardenConfig | null;
+}
+
+export interface PotConfig {
+  id: string;
+  name: string;
+  dry_weight_g: number | null;
+  wet_weight_g: number | null;
+  dry_set_at: string | null;
+  wet_set_at: string | null;
+}
+
+export interface ValveFlowRate {
+  g_per_sec: number;
+  last_calibrated: string;
+}
+
+export interface GardenConfig {
+  description?: string;
+  pots?: PotConfig[];
+  valve_flow_rates?: Record<string, ValveFlowRate>;
+  updated_at?: string;
 }

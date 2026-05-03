@@ -92,7 +92,7 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
     voice.startConversation()
   }, [conversationId, voice, onConversationCreated])
 
-  const handleClick = () => {
+  const handleClick = async () => {
     if (!voice.isConnected) {
       handleStart()
       return
@@ -101,6 +101,19 @@ export function MobileVoiceButton({ conversationId, onConversationCreated, onFir
       // User finished speaking → useEffect on isTalking will fire onQueryStart
       voice.stopTalking()
     } else {
+      // If no conversation selected (e.g. user navigated back to list), create one first
+      if (!conversationId) {
+        const conv = await createConversation()
+        if (conv) {
+          isNewConvRef.current = true
+          firstMessageSentRef.current = false
+          const newCtx = createContextId(conv.conversation_id)
+          voice.updateContextId(newCtx)
+          setActiveConvId(conv.conversation_id)
+          setActiveContextId(newCtx)
+          onConversationCreated?.(conv.conversation_id)
+        }
+      }
       voice.startTalking()
     }
   }

@@ -590,6 +590,77 @@ class FoundryGardeningAgent:
         except Exception:
             return ""
 
+    def _read_garden_config_full(self, user_id: str = "default") -> dict:
+        """Read the full garden config JSON (including pots)."""
+        try:
+            safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+            client = self._get_iot_blob_client()
+            container = _env("IOT_BLOB_CONTAINER", "garden-images")
+            blob = client.get_blob_client(container=container, blob=f"{GARDEN_CONFIG_BLOB_PREFIX}-{safe_id}.json")
+            return json.loads(blob.download_blob().readall())
+        except Exception:
+            return {}
+
+    def _write_garden_config_full(self, config: dict, user_id: str = "default"):
+        """Write the full garden config JSON back to blob."""
+        safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+        client = self._get_iot_blob_client()
+        container = _env("IOT_BLOB_CONTAINER", "garden-images")
+        blob = client.get_blob_client(container=container, blob=f"{GARDEN_CONFIG_BLOB_PREFIX}-{safe_id}.json")
+        blob.upload_blob(
+            json.dumps(config),
+            overwrite=True,
+            content_settings=ContentSettings(content_type="application/json"),
+        )
+
+    def _set_pot_weight(self, pot_id: str, weight_type: str, user_id: str = "default", weight_value: float = None) -> str:
+        """Set dry or wet weight for a pot.
+        If weight_value is provided, use that directly (for auto-recalibration).
+        Otherwise, read from the current scale (for user-initiated calibration).
+        weight_type: 'dry' or 'wet'
+        """
+        if weight_value is not None:
+            weight_g = weight_value
+        else:
+            # Read current weight from moisture-data.json
+            data = self._fetch_moisture_data()
+            if not data:
+                return "Cannot read current weight — sensor data not available."
+            current = data.get("current", {})
+            weight_g = current.get("weight_g")
+            if weight_g is None:
+                return "No weight data available from the scale."
+
+        # Read existing config
+        config = self._read_garden_config_full(user_id)
+        pots = config.get("pots", [])
+
+        # Find or create the pot entry
+        pot = next((p for p in pots if p["id"] == pot_id), None)
+        if not pot:
+            pot = {"id": pot_id, "name": pot_id}
+            pots.append(pot)
+
+        # Set the weight
+        ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        if weight_type == "dry":
+            pot["dry_weight_g"] = round(weight_g, 1)
+            pot["dry_set_at"] = ts
+        elif weight_type == "wet":
+            pot["wet_weight_g"] = round(weight_g, 1)
+            pot["wet_set_at"] = ts
+
+        config["pots"] = pots
+        self._write_garden_config_full(config, user_id)
+
+        dry = pot.get("dry_weight_g")
+        wet = pot.get("wet_weight_g")
+        result = f"Pot '{pot_id}' {weight_type} weight set to {weight_g:.1f}g."
+        if dry and wet:
+            water_capacity = wet - dry
+            result += f" Water capacity: {water_capacity:.0f}g (dry={dry:.0f}g, wet={wet:.0f}g)."
+        return result
+
     # ── Timelapse video ────────────────────────────────────────────────
     def _create_timelapse_video(self, date_from: str, date_to: str, fps: int = 4, context_id: str = "") -> Optional[str]:
         """Create a timelapse MP4 from historical garden images. Returns blob URL."""
@@ -980,8 +1051,18 @@ You help the user monitor and care for their garden by analyzing real-time image
 ## Capabilities
 - **Garden Health Analysis**: Analyze garden images for plant health, growth stage, pest issues, disease signs, and soil conditions.
 - **Watering Recommendations**: Based on visual analysis, advise when and how much to water.
-- **Irrigation Control**: You can trigger the IoT irrigation system. Default watering time is 2 minutes. The user can specify a custom duration (e.g., "water for 30 seconds", "irrigate for 5 minutes"). If irrigation was already triggered, confirm it and explain they can request more if needed.
-- **Soil Moisture Monitoring**: You can read the soil moisture sensor to check current moisture levels and recent trends. Use this data to advise whether watering is needed. Below 20% is dry and needs water, 20-50% is good, above 50% is very moist.
+- **Irrigation Control**: You can trigger the IoT irrigation system via valves. **IMPORTANT: Base all watering decisions on pot weight, NOT the capacitive moisture sensor.** The moisture sensor is unreliable — use it only as a secondary reference.
+  - **Smart duration calculation**: Check `get_pot_config` for stored valve flow rates (`g_per_sec`). If a flow rate exists, calculate the exact duration: `(wet_weight - current_weight) / g_per_sec` = seconds needed. If no flow rate is stored yet (first watering with this valve), use a 60-second calibration run, then read the weight change after to calculate and store the flow rate for future use.
+  - **Flow rate calibration**: After the first watering, read sensor data to see the weight change, then store: `weight_change / duration_seconds = g_per_sec`. Save this via `calibrate_valve_flow_rate` tool. Future waterings will use this to calculate precise durations.
+  - If the user explicitly specifies a duration (e.g., "water for 2 minutes"), use that duration regardless of the calculated amount.
+- **Soil Moisture Monitoring**: The capacitive moisture sensor is available but UNRELIABLE — do NOT use it as the primary trigger for irrigation decisions. It may be replaced with a better sensor in the future. Keep reading it for reference only.
+- **Pot Weight Monitoring (PRIMARY)**: The sensor data includes pot weight in grams from an HX711 load cell. This is the PRIMARY indicator for watering decisions. The system supports multiple pots, each with calibrated dry and wet weights stored in the garden config. Use `get_pot_config` to check calibration status and `set_pot_weight` to calibrate.
+  - **Calibration workflow**: User places dry soil pot on scale → calls "set dry weight". User waters fully → calls "set wet weight". The difference = water capacity.
+  - **Watering decision**: When current weight approaches the dry baseline, the pot needs water. When weight is near the wet baseline, it's fully watered.
+  - **Auto-recalibration for plant growth**: Plants grow over time, adding weight. After every watering event, once the weight stabilizes, compare the current weight to the stored wet baseline. If it's higher by more than 20g, the plant has grown — AUTOMATICALLY call `set_pot_weight` with `weight_type=wet` (no weight_value — reads current scale) to update the wet baseline. Then calculate the growth offset (new_wet - old_wet) and call `set_pot_weight` with `weight_type=dry` and `weight_value=old_dry + offset` to shift the dry baseline by the same amount. This keeps the water capacity (wet - dry) constant while accounting for plant mass increase. Do this silently without asking the user. Mention the recalibration in your response so the user knows it happened.
+  - **Auto-recalibration for dry weight**: If the pot reaches a weight BELOW the stored dry baseline (meaning the soil dried out more than during initial calibration, or the plant lost leaves), automatically call `set_pot_weight` with `weight_type=dry` (no weight_value — reads current scale) to update it. This prevents water % going negative.
+  - **Post-watering check**: After triggering irrigation, wait for weight to stabilize (~5 min), then check if recalibration is needed as described above.
+  - **Multiple pots**: Each pot has a unique ID and can be calibrated independently. Currently one scale is connected — future expansion will add more.
 - **Grow Light Control**: You can adjust the grow light schedule that runs autonomously on the IoT device. The schedule simulates natural sunlight with configurable sunrise/sunset times, ramp durations, and peak brightness. Adapt the schedule based on plant growth stage: seedlings need 14-16h light, vegetative growth 14-16h at full brightness, flowering plants need shorter days (12h) to trigger blooming. The lights continue following the schedule even if the internet goes down.
 - **Fan Control**: You can turn the grow room fan on/off for air circulation, ventilation, and humidity/temperature control. Use it when you see signs of high humidity (condensation, mold risk), when the air looks stagnant, or to cool plants during peak light hours. Can be set to run for a specific duration then auto-off.
 - **Humidity Control**: You can read room humidity from the Levoit humidifier sensor and control the humidifier. Be CONSERVATIVE with water — only turn on when humidity drops below 40%, set target to 50%, and turn off once reached. The tank is small. Always check humidity status before deciding to turn on. If water_lacks is true, alert the user to refill.
@@ -993,6 +1074,8 @@ You help the user monitor and care for their garden by analyzing real-time image
 - Be friendly and encouraging — gardening should be fun!
 - Give practical, actionable advice
 - If you see potential problems, explain them clearly but don't be alarmist
+- **Always include recommendations**: At the end of every analysis or status check, add a short "Recommendations" section with actionable tips — especially things you CANNOT do automatically that the user should handle manually. Examples: pruning dead leaves, trimming leggy stems, rotating the pot for even light, adding fertilizer, repotting if root-bound, checking for pests underneath leaves, adjusting stake/trellis, thinning seedlings, topping/pinching for bushier growth, hand-pollinating flowers, removing yellowing lower leaves, etc. Also suggest any setup improvements like adding sensors you don't have yet, repositioning the camera, or adjusting the grow light height. Keep it brief — 2-3 bullet points max, relevant to what you actually observe.
+- **Asking questions**: If you don't know basic things like what plants the user is growing, feel free to ask — but keep it natural and limit yourself to one question at a time. When they answer, save it with `save_garden_note` so you remember next time. Don't ask if it's already in the Garden Profile.
 - **Night-time awareness**: The camera has no night vision. If it is currently nighttime (roughly 8 PM – 7 AM Eastern), snapshots will be completely dark. Do NOT retry taking photos when it's dark — instead, tell the user the image is dark because it's nighttime and suggest they try again during daylight hours or turn on a grow light first.
 
 Current date/time: {datetime.datetime.now().astimezone().isoformat()}
@@ -1199,6 +1282,83 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 "required": [],
             },
         },
+        {
+            "type": "function",
+            "name": "set_pot_weight",
+            "description": "Calibrate a pot's dry or wet weight. If weight_value is omitted, reads the current scale value (for user-initiated calibration). If weight_value is provided, sets that exact value (for auto-recalibration when adjusting for plant growth).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pot_id": {
+                        "type": "string",
+                        "description": "Identifier for the pot (e.g., 'pot_1', 'tomato_pot', 'basil'). Use a consistent name for each physical pot.",
+                    },
+                    "weight_type": {
+                        "type": "string",
+                        "enum": ["dry", "wet"],
+                        "description": "'dry' = soil is dry and needs water. 'wet' = just fully watered.",
+                    },
+                    "weight_value": {
+                        "type": "number",
+                        "description": "Optional: specific weight in grams to set. Use this for auto-recalibration (e.g., adjusting dry baseline by an offset after plant growth). If omitted, the current scale reading is used.",
+                    },
+                    "pot_name": {
+                        "type": "string",
+                        "description": "Optional friendly name for the pot (e.g., 'Cherry Tomatoes'). Only needed when first creating a pot.",
+                    },
+                },
+                "required": ["pot_id", "weight_type"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "get_pot_config",
+            "description": "Get the weight calibration config for all pots and valve flow rates. Shows dry/wet weights, water capacity, valve flow rates (g/s), and when each was last calibrated. Call this when the user asks about pot setup, weight thresholds, calibration status, or before calculating irrigation duration.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+        {
+            "type": "function",
+            "name": "calibrate_valve_flow_rate",
+            "description": "Store the flow rate (grams per second) for a valve after a calibration watering. Call this AFTER a watering run when you know the weight change and duration. Calculate: g_per_sec = weight_change_g / duration_seconds.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "valve": {
+                        "type": "string",
+                        "enum": ["a", "b", "c"],
+                        "description": "Which valve: a=plain water, b=grow, c=bloom",
+                    },
+                    "g_per_sec": {
+                        "type": "number",
+                        "description": "Flow rate in grams per second. Calculate from weight change / duration.",
+                    },
+                },
+                "required": ["valve", "g_per_sec"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "save_garden_note",
+            "description": "Save an important fact about the user's garden to persistent memory. Use this to store answers the user gives you (plant types, growth goals, soil mix, pot size, location, growing experience level, etc.). Each note is a short key-value pair. Notes persist across conversations so you don't have to ask again. Check existing notes in the Garden Description before asking a question — never ask something you already know.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Short label, e.g. 'plants', 'soil_mix', 'pot_size', 'grow_goal', 'experience', 'location', 'nutrients'",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "The fact to remember, e.g. 'Cherry tomatoes (Sweet 100) and basil', 'Fox Farm Ocean Forest', 'Indoor grow tent, east-facing window'",
+                    },
+                },
+                "required": ["key", "value"],
+            },
+        },
     ]
 
     # ── Tool execution helpers ───────────────────────────────────────────
@@ -1269,10 +1429,34 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 irrigating = current.get("irrigating", False)
                 temp_c = current.get("temp_c")
 
+                weight_g = current.get("weight_g")
+
                 result = f"Current soil moisture: {pct}% (raw: {raw}) as of {ts}."
                 if temp_c is not None and temp_c > -100:
                     temp_f = temp_c * 9.0 / 5.0 + 32.0
                     result += f" Air temperature: {temp_c:.1f}°C ({temp_f:.1f}°F)."
+                if weight_g is not None:
+                    result += f" Pot weight: {weight_g:.1f}g."
+                    # Include pot calibration context
+                    try:
+                        _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                        pot_config = await asyncio.to_thread(self._read_garden_config_full, _user_id)
+                        pots = pot_config.get("pots", [])
+                        for p in pots:
+                            dry = p.get("dry_weight_g")
+                            wet = p.get("wet_weight_g")
+                            name = p.get("name", p["id"])
+                            if dry and wet:
+                                water_capacity = wet - dry
+                                water_remaining = weight_g - dry
+                                water_pct = max(0, min(100, (water_remaining / water_capacity) * 100)) if water_capacity > 0 else 0
+                                result += f" Pot '{name}': {water_pct:.0f}% water remaining (dry={dry:.0f}g, wet={wet:.0f}g, capacity={water_capacity:.0f}g)."
+                            elif dry:
+                                result += f" Pot '{name}': dry baseline={dry:.0f}g (wet not calibrated yet)."
+                            elif wet:
+                                result += f" Pot '{name}': wet baseline={wet:.0f}g (dry not calibrated yet)."
+                    except Exception:
+                        pass
                 if irrigating:
                     result += " The irrigation system is currently running."
 
@@ -1396,6 +1580,109 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 return "Garden memory log cleared. Starting fresh.", images_data
             except Exception as e:
                 return f"Failed to clear garden log: {e}", images_data
+
+        elif tool_name == "set_pot_weight":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                pot_id = tool_args.get("pot_id", "pot_1")
+                weight_type = tool_args.get("weight_type", "dry")
+                pot_name = tool_args.get("pot_name")
+                weight_value = tool_args.get("weight_value")
+                result = await asyncio.to_thread(self._set_pot_weight, pot_id, weight_type, user_id, weight_value)
+                # If a friendly name was provided, update it
+                if pot_name:
+                    config = await asyncio.to_thread(self._read_garden_config_full, user_id)
+                    pots = config.get("pots", [])
+                    pot = next((p for p in pots if p["id"] == pot_id), None)
+                    if pot:
+                        pot["name"] = pot_name
+                        config["pots"] = pots
+                        await asyncio.to_thread(self._write_garden_config_full, config, user_id)
+                self._append_garden_event("weight_calibration", f"{pot_id} {weight_type} set")
+                return result, images_data
+            except Exception as e:
+                return f"Failed to set pot weight: {e}", images_data
+
+        elif tool_name == "get_pot_config":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                config = await asyncio.to_thread(self._read_garden_config_full, user_id)
+                pots = config.get("pots", [])
+                flow_rates = config.get("valve_flow_rates", {})
+                lines = []
+                if pots:
+                    lines.append("**Pot calibrations:**")
+                    for p in pots:
+                        name = p.get("name", p["id"])
+                        dry = p.get("dry_weight_g")
+                        wet = p.get("wet_weight_g")
+                        line = f"- **{name}** (id: {p['id']}): "
+                        if dry is not None:
+                            line += f"dry={dry:.0f}g (set {p.get('dry_set_at', '?')})"
+                        else:
+                            line += "dry=not set"
+                        line += ", "
+                        if wet is not None:
+                            line += f"wet={wet:.0f}g (set {p.get('wet_set_at', '?')})"
+                        else:
+                            line += "wet=not set"
+                        if dry and wet:
+                            line += f", water capacity={wet - dry:.0f}g"
+                        lines.append(line)
+                else:
+                    lines.append("No pots configured yet. Use 'set dry weight' or 'set wet weight' to calibrate a pot.")
+                valve_names = {"a": "Plain Water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+                lines.append("\n**Valve flow rates:**")
+                for v in ["a", "b", "c"]:
+                    rate = flow_rates.get(v, {})
+                    g_per_sec = rate.get("g_per_sec")
+                    if g_per_sec:
+                        lines.append(f"- Valve {v.upper()} ({valve_names[v]}): {g_per_sec:.1f} g/s (calibrated {rate.get('calibrated_at', '?')})")
+                    else:
+                        lines.append(f"- Valve {v.upper()} ({valve_names[v]}): not calibrated — first watering will use 30s test run")
+                return "\n".join(lines), images_data
+            except Exception as e:
+                return f"Failed to read pot config: {e}", images_data
+
+        elif tool_name == "calibrate_valve_flow_rate":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                valve = tool_args.get("valve", "a").lower()
+                g_per_sec = tool_args.get("g_per_sec", 0)
+                if g_per_sec <= 0:
+                    return "Invalid flow rate — must be positive.", images_data
+                config = await asyncio.to_thread(self._read_garden_config_full, user_id)
+                flow_rates = config.get("valve_flow_rates", {})
+                flow_rates[valve] = {
+                    "g_per_sec": round(g_per_sec, 2),
+                    "calibrated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                config["valve_flow_rates"] = flow_rates
+                await asyncio.to_thread(self._write_garden_config_full, config, user_id)
+                valve_names = {"a": "Plain Water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+                self._append_garden_event("flow_calibration", f"Valve {valve.upper()} = {g_per_sec:.2f} g/s")
+                return f"Valve {valve.upper()} ({valve_names.get(valve, valve)}) flow rate saved: {g_per_sec:.2f} g/s.", images_data
+            except Exception as e:
+                return f"Failed to calibrate valve flow rate: {e}", images_data
+
+        elif tool_name == "save_garden_note":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                key = tool_args.get("key", "").strip()
+                value = tool_args.get("value", "").strip()
+                if not key or not value:
+                    return "Key and value are required.", images_data
+                config = await asyncio.to_thread(self._read_garden_config_full, user_id)
+                notes = config.get("notes", {})
+                notes[key] = value
+                config["notes"] = notes
+                # Also update description with a summary for prompt context
+                note_lines = [f"- {k}: {v}" for k, v in notes.items()]
+                config["description"] = "## Garden Profile\n" + "\n".join(note_lines)
+                await asyncio.to_thread(self._write_garden_config_full, config, user_id)
+                return f"Saved: {key} = {value}", images_data
+            except Exception as e:
+                return f"Failed to save note: {e}", images_data
 
         return f"Unknown tool: {tool_name}", images_data
 
@@ -1547,6 +1834,15 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     yield "Checking humidifier..."
                 elif tool_name == "clear_garden_log":
                     yield "Clearing garden memory..."
+                elif tool_name == "set_pot_weight":
+                    wt = tool_args.get("weight_type", "dry")
+                    yield f"Reading scale and setting {wt} weight..."
+                elif tool_name == "get_pot_config":
+                    yield "Reading pot weight configuration..."
+                elif tool_name == "calibrate_valve_flow_rate":
+                    yield "Saving valve flow rate..."
+                elif tool_name == "save_garden_note":
+                    yield f"Remembering: {tool_args.get('key', '')}..."
 
                 result_text, images = await self._execute_tool_call(tool_name, tool_args, context_id)
                 all_images.extend(images)

@@ -16,6 +16,7 @@ import IrrigationTile from "./irrigation-tile";
 import NextEvent from "./next-event";
 import LastAction from "./last-action";
 import EnvironmentChart from "./environment-chart";
+import PotWeightTile from "./pot-weight-tile";
 // PhotoTimeline is now integrated into CameraFeed
 
 export default function GardenDashboard() {
@@ -211,7 +212,7 @@ export default function GardenDashboard() {
           />
         </div>
 
-        {/* Middle row: Irrigation+Status | Agent Log */}
+        {/* Middle row: Irrigation+Status+Pots | Agent Log */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4">
           <div className="space-y-2">
             <div className="grid grid-cols-2 gap-2">
@@ -222,12 +223,25 @@ export default function GardenDashboard() {
               <NextEvent schedule={schedule} />
               <LastAction log={data?.garden_log || []} />
             </div>
+            <PotWeightTile
+              config={data?.garden_config || null}
+              currentWeightG={moisture?.current?.weight_g ?? null}
+              onSetWeight={async (potId, type) => {
+                await sendControl("set_pot_weight", { pot_id: potId, weight_type: type });
+              }}
+              onRenamePot={async (potId, name) => {
+                await sendControl("rename_pot", { pot_id: potId, name });
+              }}
+              onResetCalibration={async (potId) => {
+                await sendControl("reset_pot_calibration", { pot_id: potId });
+              }}
+            />
           </div>
           <AgentLog entries={data?.garden_log || []} />
         </div>
 
         {/* Historical Charts */}
-        <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={data?.events || []} />
+        <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={data?.events || []} gardenConfig={data?.garden_config} />
       </main>
     </div>
   );

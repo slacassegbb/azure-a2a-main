@@ -9,6 +9,7 @@
 #include "mbedtls/md.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include "HX711.h"
 
 // ===========================
 // Wi-Fi
@@ -35,6 +36,8 @@ const char* AZURE_API_VERSION  = "2023-11-03";
 #define MOISTURE_PIN 9
 #define LIGHT_DIM_PIN 15  // PWM output to Mean Well XLG-100 DIM+ wire
 #define TEMP_PIN 6        // DS18B20 OneWire data pin
+#define WEIGHT_DT_PIN 17  // HX711 data pin
+#define WEIGHT_SCK_PIN 16 // HX711 clock pin
 const unsigned long DEFAULT_IRRIGATION_MS = 120000; // 2-minute default
 const unsigned long MOISTURE_READ_INTERVAL_MS = 5000; // read every 5 seconds
 const unsigned long MOISTURE_UPLOAD_INTERVAL_MS = 300000; // upload to blob every 5 minutes
@@ -129,6 +132,15 @@ unsigned long lastTempReadMs = 0;
 const unsigned long TEMP_READ_INTERVAL_MS = 30000;  // read every 30s
 
 WebServer server(80);
+
+// ===========================
+// Weight Scale (HX711)
+// ===========================
+HX711 scale;
+float lastWeightG = 0.0;
+unsigned long lastWeightReadMs = 0;
+const unsigned long WEIGHT_READ_INTERVAL_MS = 30000;  // read every 30s
+const float WEIGHT_CALIBRATION = 636.0;  // calibrated: 6oz iPhone = 170g
 
 void recordEvent(const String& type, const String& detail = "") {
   time_t now = time(nullptr);
@@ -739,7 +751,8 @@ void uploadMoistureData() {
   String newEntry = "{\"ts\":\"" + String(isoBuf) + "\",\"raw\":" + String(lastMoistureRaw) + ",\"pct\":" + String(moisturePct)
                   + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "")
                   + ",\"light\":" + String(constrain(currentBrightness, 0, 100))
-                  + ",\"fan\":" + String(fanOn ? fanSpeed : 0) + "}";
+                  + ",\"fan\":" + String(fanOn ? fanSpeed : 0)
+                  + ",\"weight_g\":" + String(lastWeightG, 1) + "}";
 
   // Download existing history
   String existing = downloadBlob(String(MOISTURE_BLOB_NAME));
@@ -791,6 +804,7 @@ void uploadMoistureData() {
   String json = "{\"current\":{\"raw\":" + String(lastMoistureRaw)
               + ",\"pct\":" + String(moisturePct)
               + ",\"temp_c\":" + String(lastTempC, 1)
+              + ",\"weight_g\":" + String(lastWeightG, 1)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + "},\"readings\":[" + readings + "]}";
@@ -1016,6 +1030,17 @@ void readTemperature() {
   }
 }
 
+void readWeight() {
+  if (millis() - lastWeightReadMs < WEIGHT_READ_INTERVAL_MS) return;
+  lastWeightReadMs = millis();
+  if (!scale.is_ready()) {
+    Serial.println("[WEIGHT] HX711 not ready");
+    return;
+  }
+  lastWeightG = scale.get_units(10);  // average of 10 readings
+  Serial.println("[WEIGHT] " + String(lastWeightG, 1) + "g");
+}
+
 void handleRoot()   { server.send(200, "text/html", htmlPage()); }
 void handleStatus() {
   int moisturePct = map(lastMoistureRaw, 40, 110, 0, 100);
@@ -1029,7 +1054,8 @@ void handleStatus() {
               + ",\"moisture_raw\":" + String(lastMoistureRaw)
               + ",\"moisture_instant\":" + String(instantRaw)
               + ",\"moisture_pct\":" + String(moisturePct)
-              + ",\"temp_c\":" + String(lastTempC, 1) + "}";
+              + ",\"temp_c\":" + String(lastTempC, 1)
+              + ",\"weight_g\":" + String(lastWeightG, 1) + "}";
   server.send(200, "application/json", json);
 }
 
@@ -1120,6 +1146,20 @@ void setup() {
 
   tempSensor.begin();
   Serial.println("Temperature sensor on GPIO " + String(TEMP_PIN) + " — " + String(tempSensor.getDeviceCount()) + " device(s) found");
+
+  scale.begin(WEIGHT_DT_PIN, WEIGHT_SCK_PIN);
+  scale.set_scale(WEIGHT_CALIBRATION);
+  Serial.print("Waiting for HX711");
+  unsigned long hx711Wait = millis();
+  while (!scale.is_ready() && millis() - hx711Wait < 3000) {
+    delay(100);
+    Serial.print(".");
+  }
+  if (scale.is_ready()) {
+    Serial.println("\nWeight scale ready (DT=" + String(WEIGHT_DT_PIN) + " SCK=" + String(WEIGHT_SCK_PIN) + ")");
+  } else {
+    Serial.println("\n[WEIGHT] HX711 not found — check wiring on GPIO 16/17");
+  }
   Serial.println("Moisture sensor on GPIO " + String(MOISTURE_PIN));
   Serial.println("Kasa light: " + String(strlen(KASA_LIGHT_IP) ? KASA_LIGHT_IP : "(not configured)"));
   Serial.println("Kasa fan: " + String(KASA_FAN_IP));
@@ -1163,6 +1203,7 @@ void loop() {
   server.handleClient();
   readMoisture();
   readTemperature();
+  readWeight();
   uploadMoistureData();
   pollForCommand();
   checkIrrigationTimer();

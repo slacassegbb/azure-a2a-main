@@ -86,7 +86,7 @@ export async function GET() {
   const client = getClient();
   const container = client.getContainerClient(CONTAINER);
 
-  const [moisture, lightSchedule, fan, valve, irrigation, gardenLog, cameraProps, photos, humidifier, gardenEvents] =
+  const [moisture, lightSchedule, fan, valve, irrigation, gardenLog, cameraProps, photos, humidifier, gardenEvents, gardenConfig] =
     await Promise.allSettled([
       readJsonBlob(container, "moisture-data.json"),
       readJsonBlob(container, "light-schedule.json"),
@@ -98,6 +98,7 @@ export async function GET() {
       listRecentPhotos(container, 20),
       readJsonBlob(container, "humidifier-status.json"),
       readJsonBlob(container, "garden-events.json"),
+      readJsonBlob(container, `garden-config-${USER_ID}.json`),
     ]);
 
   const resolve = (r: PromiseSettledResult<any>) => (r.status === "fulfilled" ? r.value : null);
@@ -118,5 +119,6 @@ export async function GET() {
     photos: resolve(photos) || [],
     humidifier: resolve(humidifier),
     events: resolve(gardenEvents)?.events || [],
+    garden_config: resolve(gardenConfig),
   });
 }

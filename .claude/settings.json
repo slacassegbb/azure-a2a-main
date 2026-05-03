@@ -30,7 +30,18 @@
       "Bash(source .venv/bin/activate)",
       "Bash(python3 -c \":*)",
       "Bash(pkill -f \"python __main__.py --host 0.0.0.0 --port 9050\")",
-      "Bash(docker info:*)"
+      "Bash(docker info:*)",
+      "Bash(gh repo:*)",
+      "WebFetch(domain:community.openai.com)",
+      "WebSearch",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:webrtchacks.com)",
+      "Bash(git push:*)",
+      "Bash(az containerapp:*)",
+      "Bash(docker push:*)",
+      "Bash(lsof -ti:3001)",
+      "Bash(docker build:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "additionalDirectories": [
       "/Users/simonlacasse/Downloads/sl-a2a-main2/.claude/skills/a2a-agent-creator/assets/utils"
