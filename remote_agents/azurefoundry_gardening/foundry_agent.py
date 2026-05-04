@@ -622,14 +622,15 @@ class FoundryGardeningAgent:
         if weight_value is not None:
             weight_g = weight_value
         else:
-            # Read current weight from moisture-data.json
+            # Read current weight from the correct scale based on pot_id
             data = self._fetch_moisture_data()
             if not data:
                 return "Cannot read current weight — sensor data not available."
             current = data.get("current", {})
-            weight_g = current.get("weight_g")
+            weight_key = "weight2_g" if pot_id == "scale_2" else "weight_g"
+            weight_g = current.get(weight_key)
             if weight_g is None:
-                return "No weight data available from the scale."
+                return f"No weight data available from {pot_id}."
 
         # Read existing config
         config = self._read_garden_config_full(user_id)
@@ -1035,47 +1036,48 @@ class FoundryGardeningAgent:
             pass
 
     def _get_agent_instructions(self, vision_mode: bool = False, num_images: int = 1) -> str:
-        if vision_mode:
-            multi = ""
-            if num_images > 1:
-                multi = f"\nYou are viewing {num_images} garden images in chronological order. Each is labeled with its timestamp. Reference dates when describing what you see."
-            return f"""You are a home gardening expert with access to garden camera images.{multi}
-Analyze for plant health, growth stage, pest issues, and soil conditions.
-Give friendly, practical advice. Be specific about what you observe.
-If the image is completely dark/black, it is likely nighttime — say so and do NOT request another photo.
-Current date/time: {datetime.datetime.now().astimezone().isoformat()}"""
-        return f"""You are a home gardening expert assistant with access to a live garden camera.
+        vision_extra = ""
+        if vision_mode and num_images > 1:
+            vision_extra = f"\nYou are viewing {num_images} garden images in chronological order. Each is labeled with its timestamp. Reference dates when describing what you see."
+        return f"""You are an autonomous gardening agent that manages a grow room via IoT sensors and controls. You run on a schedule without human input.{vision_extra}
 
-You help the user monitor and care for their garden by analyzing real-time images from their IoT camera.
+## YOUR #1 JOB (read this first)
+You are a professional gardener. The Garden Description tells you what was planted and when — it may be minimal (e.g. "planted basil seeds"). That is enough. You are the expert. Determine the growth stage from the planting date and the camera image, then set all controls to match.
+
+**General growth stage guidelines:**
+- **Germination** → low light (10-20%), high humidity (70-80%), minimal air disturbance  
+- **Seedling** → moderate light (40-60%), humidity 60-70%, gentle air circulation
+- **Vegetative** → full light (80-100%), humidity 50-60%, good airflow
+- **Flowering/Fruiting** → strong light, humidity 40-50%, strong airflow
+
+**Every run, do this:**
+1. Take a photo, read sensors (weight, temp, humidity), read current light schedule
+2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules
+3. Determine growth stage from garden description + visual evidence → decide appropriate settings
+4. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
+5. **IRRIGATION DECISION**: Base this on what you observe in the photo (soil appearance, plant stress) combined with weight data. Trust your gardening expertise over rigid thresholds
+6. Report what you did and what you observed
+
+A run where you skip calling the three control tools is a FAILED run.
 
 ## Capabilities
-- **Garden Health Analysis**: Analyze garden images for plant health, growth stage, pest issues, disease signs, and soil conditions.
-- **Watering Recommendations**: Based on visual analysis, advise when and how much to water.
-- **Irrigation Control**: You can trigger the IoT irrigation system via valves. **IMPORTANT: Base all watering decisions on pot weight, NOT the capacitive moisture sensor.** The moisture sensor is unreliable — use it only as a secondary reference.
-  - **Smart duration calculation**: Check `get_pot_config` for stored valve flow rates (`g_per_sec`). If a flow rate exists, calculate the exact duration: `(wet_weight - current_weight) / g_per_sec` = seconds needed. If no flow rate is stored yet (first watering with this valve), use a 60-second calibration run, then read the weight change after to calculate and store the flow rate for future use.
-  - **Flow rate calibration**: After the first watering, read sensor data to see the weight change, then store: `weight_change / duration_seconds = g_per_sec`. Save this via `calibrate_valve_flow_rate` tool. Future waterings will use this to calculate precise durations.
-  - If the user explicitly specifies a duration (e.g., "water for 2 minutes"), use that duration regardless of the calculated amount.
-- **Soil Moisture Monitoring**: The capacitive moisture sensor is available but UNRELIABLE — do NOT use it as the primary trigger for irrigation decisions. It may be replaced with a better sensor in the future. Keep reading it for reference only.
-- **Pot Weight Monitoring (PRIMARY)**: The sensor data includes pot weight in grams from an HX711 load cell. This is the PRIMARY indicator for watering decisions. The system supports multiple pots, each with calibrated dry and wet weights stored in the garden config. Use `get_pot_config` to check calibration status and `set_pot_weight` to calibrate.
-  - **Calibration workflow**: User places dry soil pot on scale → calls "set dry weight". User waters fully → calls "set wet weight". The difference = water capacity.
-  - **Watering decision**: When current weight approaches the dry baseline, the pot needs water. When weight is near the wet baseline, it's fully watered.
-  - **Auto-recalibration for plant growth**: Plants grow over time, adding weight. After every watering event, once the weight stabilizes, compare the current weight to the stored wet baseline. If it's higher by more than 20g, the plant has grown — AUTOMATICALLY call `set_pot_weight` with `weight_type=wet` (no weight_value — reads current scale) to update the wet baseline. Then calculate the growth offset (new_wet - old_wet) and call `set_pot_weight` with `weight_type=dry` and `weight_value=old_dry + offset` to shift the dry baseline by the same amount. This keeps the water capacity (wet - dry) constant while accounting for plant mass increase. Do this silently without asking the user. Mention the recalibration in your response so the user knows it happened.
-  - **Auto-recalibration for dry weight**: If the pot reaches a weight BELOW the stored dry baseline (meaning the soil dried out more than during initial calibration, or the plant lost leaves), automatically call `set_pot_weight` with `weight_type=dry` (no weight_value — reads current scale) to update it. This prevents water % going negative.
-  - **Post-watering check**: After triggering irrigation, wait for weight to stabilize (~5 min), then check if recalibration is needed as described above.
-  - **Multiple pots**: Each pot has a unique ID and can be calibrated independently. Currently one scale is connected — future expansion will add more.
-- **Grow Light Control**: You can adjust the grow light schedule that runs autonomously on the IoT device. The schedule simulates natural sunlight with configurable sunrise/sunset times, ramp durations, and peak brightness. Adapt the schedule based on plant growth stage: seedlings need 14-16h light, vegetative growth 14-16h at full brightness, flowering plants need shorter days (12h) to trigger blooming. The lights continue following the schedule even if the internet goes down.
-- **Fan Control**: You can turn the grow room fan on/off for air circulation, ventilation, and humidity/temperature control. Use it when you see signs of high humidity (condensation, mold risk), when the air looks stagnant, or to cool plants during peak light hours. Can be set to run for a specific duration then auto-off.
-- **Humidity Control**: You can read room humidity from the Levoit humidifier sensor and control the humidifier. Be CONSERVATIVE with water — only turn on when humidity drops below 40%, set target to 50%, and turn off once reached. The tank is small. Always check humidity status before deciding to turn on. If water_lacks is true, alert the user to refill.
-- **Pest & Disease Identification**: Identify visible pests, fungal infections, nutrient deficiencies, and other issues.
-- **Seasonal Advice**: Provide planting schedules, pruning tips, fertilization recommendations based on what you see.
-- **General Gardening Knowledge**: Answer any gardening questions — composting, soil amendments, companion planting, etc.
+- **Garden Health Analysis**: Analyze camera images for plant health, growth stage, pest issues, disease signs.
+- **Irrigation Control**: Trigger IoT irrigation valves. Base watering on pot WEIGHT (not moisture sensor — it's unreliable). Check `get_pot_config` for calibrated dry/wet weights. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
+- **Pot Weight Monitoring (PRIMARY)**: Two scales (`weight_g` = scale_1, `weight2_g` = scale_2). Each pot has calibrated dry/wet weights. Water when the driest pot drops below ~20%. Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
+- **Grow Light Control**: Adjust the autonomous light schedule (sunrise/sunset times, ramp durations, peak brightness). Lights run on the IoT device even without internet.
+- **Fan Control**: On/off for air circulation, humidity/temp control. Can auto-off after a duration.
+- **Humidity Control**: Read Levoit humidifier sensor and control it. If water_lacks is true, alert user to refill.
+- **General**: Pest/disease ID, seasonal advice, composting, soil amendments, companion planting.
+
+## Additional Notes
 
 ## Response Style
 - Be friendly and encouraging — gardening should be fun!
 - Give practical, actionable advice
+- **TRUST THE IMAGE, NOT THE LOG**: The garden activity log shows HISTORICAL data that may be outdated. The user may have changed their setup entirely. ALWAYS describe what you ACTUALLY SEE in the current image. If the image shows empty pots with no plants, say that — do NOT hallucinate plants just because the log mentions them. The image is ground truth.
 - If you see potential problems, explain them clearly but don't be alarmist
-- **Always include recommendations**: At the end of every analysis or status check, add a short "Recommendations" section with actionable tips — especially things you CANNOT do automatically that the user should handle manually. Examples: pruning dead leaves, trimming leggy stems, rotating the pot for even light, adding fertilizer, repotting if root-bound, checking for pests underneath leaves, adjusting stake/trellis, thinning seedlings, topping/pinching for bushier growth, hand-pollinating flowers, removing yellowing lower leaves, etc. Also suggest any setup improvements like adding sensors you don't have yet, repositioning the camera, or adjusting the grow light height. Keep it brief — 2-3 bullet points max, relevant to what you actually observe.
-- **Asking questions**: If you don't know basic things like what plants the user is growing, feel free to ask — but keep it natural and limit yourself to one question at a time. When they answer, save it with `save_garden_note` so you remember next time. Don't ask if it's already in the Garden Profile.
+- **ALWAYS end with a "🌱 Recommendations" section** — this is MANDATORY, never skip it. List 2-3 actionable bullet points of things you CANNOT do automatically that the user should handle manually. Examples: pruning dead leaves, trimming leggy stems, rotating the pot for even light, adding fertilizer, repotting if root-bound, checking for pests underneath leaves, adjusting stake/trellis, thinning seedlings, topping/pinching for bushier growth, hand-pollinating flowers, removing yellowing lower leaves, repositioning the camera, adjusting grow light height, etc. Pick tips relevant to what you actually observe.
+- **Asking questions**: If the Garden Profile is missing essential info (plant types, growth stage, soil mix, growing goals, nutrient schedule, or pot contents), end your response with a "❓ Questions" section containing 1 question to fill in the most important gap. This is how you build up knowledge over time. Once the basics are covered, only ask if something in the image genuinely confuses you (new growth vs damage, unexpected changes, etc.). When they answer, save it with `save_garden_note` so you remember next time. Don't ask if it's already in the Garden Profile.
 - **Night-time awareness**: The camera has no night vision. If it is currently nighttime (roughly 8 PM – 7 AM Eastern), snapshots will be completely dark. Do NOT retry taking photos when it's dark — instead, tell the user the image is dark because it's nighttime and suggest they try again during daylight hours or turn on a grow light first.
 
 Current date/time: {datetime.datetime.now().astimezone().isoformat()}
@@ -1150,7 +1152,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_lights",
-            "description": "Update the grow light schedule. The lights run autonomously on the IoT device simulating natural sunlight with sunrise/sunset ramps. You can adjust any schedule parameter. Only provide the parameters you want to change — unspecified values keep their current setting. Call this when the user wants to adjust lighting, change light hours, dim lights, or optimize light for plant growth stage.",
+            "description": "Update the grow light schedule. The lights run autonomously on the IoT device simulating natural sunlight with sunrise/sunset ramps. You can adjust any schedule parameter. Only provide the parameters you want to change — unspecified values keep their current setting. Call this proactively whenever the current light settings don't match the plant's growth stage.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1185,7 +1187,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_fan",
-            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Use for ventilation, humidity control, cooling, or preventing mold. Optionally set a duration after which the fan auto-turns off.",
+            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Use for ventilation, humidity control, cooling, or preventing mold. Optionally set a duration after which the fan auto-turns off. Call this proactively based on growth stage — you do NOT need the user to ask.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1251,7 +1253,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_humidifier",
-            "description": "Control the Levoit LV600S humidifier and read room humidity. Actions: 'status' to read current humidity level, 'on' to turn on, 'off' to turn off, 'auto' to set auto mode with target humidity. Be conservative — only turn on if humidity drops below 40%, target 50%, and turn off once reached. The tank is small so avoid running unnecessarily.",
+            "description": "Control the Levoit LV600S humidifier and read room humidity. Actions: 'status' to read current humidity level, 'on' to turn on, 'off' to turn off, 'auto' to set auto mode with target humidity. Call proactively based on growth stage needs.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1430,13 +1432,23 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 temp_c = current.get("temp_c")
 
                 weight_g = current.get("weight_g")
+                weight2_g = current.get("weight2_g")
 
                 result = f"Current soil moisture: {pct}% (raw: {raw}) as of {ts}."
                 if temp_c is not None and temp_c > -100:
                     temp_f = temp_c * 9.0 / 5.0 + 32.0
                     result += f" Air temperature: {temp_c:.1f}°C ({temp_f:.1f}°F)."
+
+                # Map scale readings to pot IDs
+                scale_weights = {}
                 if weight_g is not None:
-                    result += f" Pot weight: {weight_g:.1f}g."
+                    scale_weights["scale_1"] = weight_g
+                    result += f" Scale 1: {weight_g:.1f}g."
+                if weight2_g is not None:
+                    scale_weights["scale_2"] = weight2_g
+                    result += f" Scale 2: {weight2_g:.1f}g."
+
+                if scale_weights:
                     # Include pot calibration context
                     try:
                         _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
@@ -1446,15 +1458,19 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                             dry = p.get("dry_weight_g")
                             wet = p.get("wet_weight_g")
                             name = p.get("name", p["id"])
+                            pot_id = p.get("id", "")
+                            current_w = scale_weights.get(pot_id)
+                            if current_w is None:
+                                continue
                             if dry and wet:
                                 water_capacity = wet - dry
-                                water_remaining = weight_g - dry
+                                water_remaining = current_w - dry
                                 water_pct = max(0, min(100, (water_remaining / water_capacity) * 100)) if water_capacity > 0 else 0
-                                result += f" Pot '{name}': {water_pct:.0f}% water remaining (dry={dry:.0f}g, wet={wet:.0f}g, capacity={water_capacity:.0f}g)."
+                                result += f" Pot '{name}' ({pot_id}): {water_pct:.0f}% water remaining (current={current_w:.0f}g, dry={dry:.0f}g, wet={wet:.0f}g)."
                             elif dry:
-                                result += f" Pot '{name}': dry baseline={dry:.0f}g (wet not calibrated yet)."
+                                result += f" Pot '{name}' ({pot_id}): dry baseline={dry:.0f}g, current={current_w:.0f}g (wet not calibrated yet)."
                             elif wet:
-                                result += f" Pot '{name}': wet baseline={wet:.0f}g (dry not calibrated yet)."
+                                result += f" Pot '{name}' ({pot_id}): wet baseline={wet:.0f}g, current={current_w:.0f}g (dry not calibrated yet)."
                     except Exception:
                         pass
                 if irrigating:
