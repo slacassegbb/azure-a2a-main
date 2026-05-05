@@ -346,7 +346,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
                 stroke={color}
                 strokeDasharray={isValve ? "4 3" : "2 4"}
                 strokeWidth={isValve ? 2 : 1.5}
-                label={{ value: `${icon} ${detail}`.trim(), position: "top", fontSize: 9, fill: color }}
+                label={{ value: `${icon} ${detail}`.trim(), position: "insideTopLeft", fontSize: 10, fill: color, fontWeight: 600 }}
               />
             );
           })}
