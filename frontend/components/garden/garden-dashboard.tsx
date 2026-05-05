@@ -225,7 +225,12 @@ export default function GardenDashboard() {
             </div>
             <PotWeightTile
               config={data?.garden_config || null}
-              currentWeightG={moisture?.current?.weight_g ?? null}
+              scaleWeights={(() => {
+                const sw: { id: string; weightG: number | null }[] = [];
+                if (moisture?.current?.weight_g != null) sw.push({ id: "scale_1", weightG: moisture.current.weight_g });
+                if (moisture?.current?.weight2_g != null) sw.push({ id: "scale_2", weightG: moisture.current.weight2_g });
+                return sw;
+              })()}
               onSetWeight={async (potId, type) => {
                 await sendControl("set_pot_weight", { pot_id: potId, weight_type: type });
               }}
@@ -234,6 +239,9 @@ export default function GardenDashboard() {
               }}
               onResetCalibration={async (potId) => {
                 await sendControl("reset_pot_calibration", { pot_id: potId });
+              }}
+              onTare={async (scaleId) => {
+                await sendControl("tare_scale", { scale_id: scaleId });
               }}
             />
           </div>
