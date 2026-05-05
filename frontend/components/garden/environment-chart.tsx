@@ -38,6 +38,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
   const [showHumidity, setShowHumidity] = useState(true);
   const [showFan, setShowFan] = useState(true);
   const [showWeight, setShowWeight] = useState(true);
+  const [showWeight2, setShowWeight2] = useState(true);
 
   if (readings.length < 3) {
     return (
@@ -54,11 +55,15 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
     humidityMap.set(key, h.humidity);
   });
 
-  // Compute dry/wet thresholds from first calibrated pot (if any)
-  const pot = gardenConfig?.pots?.find(p => p.dry_weight_g != null && p.wet_weight_g != null);
-  const dryG = pot?.dry_weight_g ?? null;
-  const wetG = pot?.wet_weight_g ?? null;
-  const hasWeightCal = dryG != null && wetG != null && wetG > dryG;
+  // Compute dry/wet thresholds from calibrated pots
+  const pot1Cfg = gardenConfig?.pots?.find(p => p.id === "scale_1" && p.dry_weight_g != null && p.wet_weight_g != null);
+  const pot2Cfg = gardenConfig?.pots?.find(p => p.id === "scale_2" && p.dry_weight_g != null && p.wet_weight_g != null);
+  const dry1 = pot1Cfg?.dry_weight_g ?? null;
+  const wet1 = pot1Cfg?.wet_weight_g ?? null;
+  const hasCal1 = dry1 != null && wet1 != null && wet1 > dry1;
+  const dry2 = pot2Cfg?.dry_weight_g ?? null;
+  const wet2 = pot2Cfg?.wet_weight_g ?? null;
+  const hasCal2 = dry2 != null && wet2 != null && wet2 > dry2;
 
   // Take last 96 readings (~8 hours at 5-min intervals)
   let lastHumidity: number | null = null;
@@ -67,10 +72,14 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
     const h = humidityMap.get(key) ?? null;
     if (h !== null) lastHumidity = h;
     const wg = (r as any).weight_g ?? null;
+    const wg2 = (r as any).weight2_g ?? null;
     let waterPct: number | null = null;
-    if (wg != null && hasWeightCal) {
-      const capacity = wetG - dryG;
-      waterPct = Math.min(100, Math.max(0, Math.round(((wg - dryG) / capacity) * 100)));
+    let waterPct2: number | null = null;
+    if (wg != null && hasCal1) {
+      waterPct = Math.min(100, Math.max(0, Math.round(((wg - dry1!) / (wet1! - dry1!)) * 100)));
+    }
+    if (wg2 != null && hasCal2) {
+      waterPct2 = Math.min(100, Math.max(0, Math.round(((wg2 - dry2!) / (wet2! - dry2!)) * 100)));
     }
     return {
       time: formatTime(r.ts),
@@ -81,6 +90,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
       humidity: h ?? lastHumidity,
       fan: (r as any).fan ?? null,
       water: waterPct,
+      water2: waterPct2,
     };
   });
 
@@ -139,9 +149,9 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
             onClick={() => setShowFan(!showFan)}
             className="text-[10px] px-2 py-1 rounded-md font-medium transition-all"
             style={{
-              background: showFan ? "hsl(185, 70%, 55%, 0.15)" : "hsl(220, 15%, 13%)",
-              color: showFan ? "hsl(185, 70%, 55%)" : "hsl(220, 10%, 40%)",
-              border: `1px solid ${showFan ? "hsl(185, 70%, 55%, 0.3)" : "hsl(220, 15%, 18%)"}`,
+              background: showFan ? "hsl(200, 60%, 45%, 0.15)" : "hsl(220, 15%, 13%)",
+              color: showFan ? "hsl(200, 60%, 45%)" : "hsl(220, 10%, 40%)",
+              border: `1px solid ${showFan ? "hsl(200, 60%, 45%, 0.3)" : "hsl(220, 15%, 18%)"}`,
             }}
           >
             Fan
@@ -156,6 +166,17 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
             }}
           >
             Pot 1
+          </button>
+          <button
+            onClick={() => setShowWeight2(!showWeight2)}
+            className="text-[10px] px-2 py-1 rounded-md font-medium transition-all"
+            style={{
+              background: showWeight2 ? "hsl(340, 75%, 55%, 0.15)" : "hsl(220, 15%, 13%)",
+              color: showWeight2 ? "hsl(340, 75%, 55%)" : "hsl(220, 10%, 40%)",
+              border: `1px solid ${showWeight2 ? "hsl(340, 75%, 55%, 0.3)" : "hsl(220, 15%, 18%)"}`,
+            }}
+          >
+            Pot 2
           </button>
         </div>
       </div>
@@ -180,12 +201,16 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
               <stop offset="100%" stopColor="hsl(270, 70%, 65%)" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="fanGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="hsl(185, 70%, 55%)" stopOpacity={0.2} />
-              <stop offset="100%" stopColor="hsl(185, 70%, 55%)" stopOpacity={0} />
+              <stop offset="0%" stopColor="hsl(200, 60%, 45%)" stopOpacity={0.2} />
+              <stop offset="100%" stopColor="hsl(200, 60%, 45%)" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="weightGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="hsl(152, 75%, 50%)" stopOpacity={0.25} />
               <stop offset="100%" stopColor="hsl(152, 75%, 50%)" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="weight2Grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(340, 75%, 55%)" stopOpacity={0.25} />
+              <stop offset="100%" stopColor="hsl(340, 75%, 55%)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 14%)" />
@@ -263,7 +288,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
             <Area
               type="stepAfter"
               dataKey="fan"
-              stroke="hsl(185, 70%, 55%)"
+              stroke="hsl(200, 60%, 45%)"
               strokeWidth={1.5}
               fill="url(#fanGrad)"
               dot={false}
@@ -283,19 +308,45 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
               connectNulls
             />
           )}
+          {showWeight2 && (
+            <Area
+              type="monotone"
+              dataKey="water2"
+              stroke="hsl(340, 75%, 55%)"
+              strokeWidth={2}
+              fill="url(#weight2Grad)"
+              dot={false}
+              name="Pot 2"
+              connectNulls
+            />
+          )}
           {events.map((ev, i) => {
             const evTime = formatTime(ev.ts);
-            const isValve = ev.type === "valve";
-            const color = isValve ? "hsl(152, 75%, 50%)" : "hsl(185, 90%, 55%)";
-            const label = isValve ? `💧${ev.detail?.charAt(0) || ""}` : "💧";
+            const type = ev.type || "";
+            const isValve    = type === "valve" || type === "irrigate";
+            const isLight    = type === "light";
+            const isFan      = type === "fan";
+            const color = isValve ? "hsl(152, 75%, 50%)"
+                        : isLight ? "hsl(48, 95%, 60%)"
+                        : isFan   ? "hsl(185, 85%, 55%)"
+                        : "hsl(220, 10%, 55%)";
+            const icon  = isValve ? "💧"
+                        : isLight ? "☀"
+                        : isFan   ? "💨"
+                        : "•";
+            // Short readable detail: e.g. "A 2m", "60%", "OFF"
+            const detail = ev.detail
+              ? ev.detail.replace("Valve A (plain water)", "A").replace("Valve B (grow nutrients)", "B").replace("Valve C (bloom nutrients)", "C")
+                  .replace(/\d+s$/, m => `${Math.round(parseInt(m)/60)}m`).slice(0, 12)
+              : "";
             return (
               <ReferenceLine
                 key={`ev-${i}`}
                 x={evTime}
                 stroke={color}
-                strokeDasharray="3 3"
-                strokeWidth={1.5}
-                label={{ value: label, position: "top", fontSize: 10, fill: color }}
+                strokeDasharray={isValve ? "4 3" : "2 4"}
+                strokeWidth={isValve ? 2 : 1.5}
+                label={{ value: `${icon} ${detail}`.trim(), position: "top", fontSize: 9, fill: color }}
               />
             );
           })}
