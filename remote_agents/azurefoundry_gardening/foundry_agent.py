@@ -507,13 +507,24 @@ class FoundryGardeningAgent:
         except Exception:
             return []
 
+    def _clean_log_summary(self, text: str) -> str:
+        """Strip verbose image description blocks and keep only action/decision text."""
+        import re
+        # Remove the entire "# Image Content Description" section (up to next ## or end)
+        text = re.sub(r'#\s*Image Content Description.*?(?=##|\Z)', '', text, flags=re.DOTALL | re.IGNORECASE)
+        # Remove markdown headers
+        text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+        # Collapse multiple blank lines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()[:500]
+
     def _append_garden_log(self, summary: str, user_id: str = "default"):
         """Append an entry to the garden activity log."""
         try:
             entries = self._read_garden_log(user_id)
             entry = {
                 "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "summary": summary,
+                "summary": self._clean_log_summary(summary),
             }
             entries.append(entry)
             if len(entries) > MAX_LOG_ENTRIES:
@@ -535,10 +546,13 @@ class FoundryGardeningAgent:
         """Format recent log entries as context for the LLM."""
         if not entries:
             return ""
-        recent = entries[-10:]  # last 10 entries (~30 hours)
-        lines = ["## Recent Garden Activity Log"]
+        recent = entries[-6:]  # last 6 entries (~18 hours)
+        lines = ["## Recent Garden Activity Log (decisions/actions only)"]
         for e in recent:
-            lines.append(f"- **{e.get('timestamp', '?')}**: {e.get('summary', '')}")
+            summary = e.get('summary', '')
+            # Hard truncate each entry and strip any leftover headers
+            summary = summary.replace('#', '').strip()[:200]
+            lines.append(f"- **{e.get('timestamp', '?')}**: {summary}")
         return "\n".join(lines)
 
     # ── Garden events (persistent, append-only) ────────────────────────
