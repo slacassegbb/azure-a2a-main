@@ -1055,7 +1055,7 @@ You are a professional gardener. The Garden Description tells you what was plant
 2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
 4. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
-5. **IRRIGATION DECISION**: Base this on what you observe in the photo (soil appearance, plant stress) combined with weight data. Trust your gardening expertise over rigid thresholds
+5. **IRRIGATION DECISION**: Examine BOTH the soil surface AND weight data. For seeds/germination, pay special attention to surface dryness (look closely at the top soil color and texture) — seeds need surface moisture even when deep soil has water. For established plants, weight-based watering is usually sufficient. Trust your gardening expertise.
 6. Report what you did and what you observed
 
 A run where you skip calling the three control tools is a FAILED run.
@@ -1076,7 +1076,7 @@ A run where you skip calling the three control tools is a FAILED run.
 - Give practical, actionable advice
 - **TRUST THE IMAGE, NOT THE LOG**: The garden activity log shows HISTORICAL data that may be outdated. The user may have changed their setup entirely. ALWAYS describe what you ACTUALLY SEE in the current image. If the image shows empty pots with no plants, say that — do NOT hallucinate plants just because the log mentions them. The image is ground truth.
 - If you see potential problems, explain them clearly but don't be alarmist
-- **ALWAYS end with a "🌱 Recommendations" section** — this is MANDATORY, never skip it. List 2-3 actionable bullet points of things you CANNOT do automatically that the user should handle manually. Examples: pruning dead leaves, trimming leggy stems, rotating the pot for even light, adding fertilizer, repotting if root-bound, checking for pests underneath leaves, adjusting stake/trellis, thinning seedlings, topping/pinching for bushier growth, hand-pollinating flowers, removing yellowing lower leaves, repositioning the camera, adjusting grow light height, etc. Pick tips relevant to what you actually observe.
+- **ALWAYS end with a "🌱 Recommendations" section** — this is MANDATORY, never skip it. List 2-3 actionable bullet points of things you CANNOT do automatically that the user should handle manually. Pick tips relevant to what you actually observe.
 - **Asking questions**: If the Garden Profile is missing essential info (plant types, growth stage, soil mix, growing goals, nutrient schedule, or pot contents), end your response with a "❓ Questions" section containing 1 question to fill in the most important gap. This is how you build up knowledge over time. Once the basics are covered, only ask if something in the image genuinely confuses you (new growth vs damage, unexpected changes, etc.). When they answer, save it with `save_garden_note` so you remember next time. Don't ask if it's already in the Garden Profile.
 - **Night-time awareness**: The camera has no night vision. If it is currently nighttime (roughly 8 PM – 7 AM Eastern), snapshots will be completely dark. Do NOT retry taking photos when it's dark — instead, tell the user the image is dark because it's nighttime and suggest they try again during daylight hours or turn on a grow light first.
 
@@ -1903,7 +1903,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
             if text_output:
                 yield text_output
                 try:
-                    await asyncio.to_thread(self._append_garden_log, text_output[:500], _user_id)
+                    await asyncio.to_thread(self._append_garden_log, text_output[:3000], _user_id)
                 except Exception as e:
                     logger.warning(f"Failed to append garden log: {e}")
                 return
@@ -1944,7 +1944,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     yield final_text
                     # Append summary to garden log
                     try:
-                        await asyncio.to_thread(self._append_garden_log, final_text[:500], _user_id)
+                        await asyncio.to_thread(self._append_garden_log, final_text[:3000], _user_id)
                     except Exception as e:
                         logger.warning(f"Failed to append garden log: {e}")
                 else:

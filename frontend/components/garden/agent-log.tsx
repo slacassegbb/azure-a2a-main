@@ -1,6 +1,5 @@
 "use client";
 
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Activity, Ghost } from "lucide-react";
 import { GardenLogEntry } from "@/lib/garden/types";
 import { formatTimeAgo } from "@/lib/garden/calculations";
@@ -32,7 +31,7 @@ export default function AgentLog({ entries }: AgentLogProps) {
           <span className="text-xs">No activity recorded yet</span>
         </div>
       ) : (
-        <ScrollArea className="flex-1 -mx-1 pr-2" style={{ maxHeight: "500px" }}>
+        <div className="overflow-y-auto -mx-1 pr-2" style={{ maxHeight: "500px" }}>
           <div className="space-y-0.5">
             {sorted.map((entry, i) => {
               const cleanSummary = entry.summary
@@ -61,15 +60,17 @@ export default function AgentLog({ entries }: AgentLogProps) {
                     <span className="text-[10px] shrink-0 group-open:rotate-90 transition-transform" style={{ color: "hsl(220, 10%, 30%)" }}>▶</span>
                   </summary>
                   <div className="px-2 pb-2 ml-[76px]">
-                    <p className="text-[11px] leading-relaxed whitespace-pre-line" style={{ color: "hsl(220, 10%, 55%)" }}>
-                      {cleanSummary}
-                    </p>
+                    <div style={{ maxHeight: "240px", overflowY: "scroll", overscrollBehavior: "contain" }}>
+                      <p className="text-[11px] leading-relaxed whitespace-pre-line" style={{ color: "hsl(220, 10%, 55%)" }}>
+                        {cleanSummary}
+                      </p>
+                    </div>
                   </div>
                 </details>
               );
             })}
           </div>
-        </ScrollArea>
+        </div>
       )}
     </div>
   );
