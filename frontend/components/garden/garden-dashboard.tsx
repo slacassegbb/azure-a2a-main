@@ -116,7 +116,7 @@ export default function GardenDashboard() {
         </div>
 
         {/* Row 2: Sensor cards — 5 across (3 on mobile) */}
-        <div className="grid grid-cols-3 xl:grid-cols-5 gap-2 md:gap-3">
+        <div className="grid grid-cols-5 gap-1.5 md:gap-2 xl:gap-3">
           <SensorCard
             label="Temperature"
             value={tempC != null ? tempC.toFixed(1) : "--"}

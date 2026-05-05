@@ -46,21 +46,21 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
   };
 
   return (
-    <div className="rounded-xl p-3 md:p-4 flex flex-col justify-between min-h-[130px] md:min-h-[160px] relative overflow-hidden"
+    <div className="rounded-xl p-2 md:p-3 xl:p-4 flex flex-col justify-between min-h-[110px] md:min-h-[140px] xl:min-h-[160px] relative overflow-hidden"
       style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 md:gap-2">
           <Icon
-            className={`w-4 h-4 ${isSpinning ? "animate-spin" : ""}`}
+            className={`w-3 h-3 md:w-4 md:h-4 shrink-0 ${isSpinning ? "animate-spin" : ""}`}
             style={{ color, opacity: 0.8, animationDuration: isSpinning ? `${Math.max(0.3, 2 - (activeVal / 100) * 1.7)}s` : undefined }}
           />
-          <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>
+          <span className="text-[8px] md:text-[10px] xl:text-[11px] uppercase tracking-wider font-medium truncate" style={{ color: "hsl(220, 10%, 50%)" }}>
             {label}
           </span>
         </div>
         {trend && trend.direction !== "stable" && (
-          <div className="flex items-center gap-1 text-[10px]" style={{ color: trend.direction === "up" ? "hsl(152, 75%, 50%)" : "hsl(25, 95%, 55%)" }}>
+          <div className="hidden md:flex items-center gap-1 text-[10px]" style={{ color: trend.direction === "up" ? "hsl(152, 75%, 50%)" : "hsl(25, 95%, 55%)" }}>
             {trend.direction === "up" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
             {trend.change}%
           </div>
@@ -69,19 +69,19 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
 
       {/* Value */}
       <div className="mt-1">
-        <div className="flex items-baseline gap-1">
-          <span className="text-2xl md:text-3xl font-semibold tracking-tight" style={{ color: "white" }}>{value}</span>
-          <span className="text-xs md:text-sm font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>{unit}</span>
+        <div className="flex items-baseline gap-0.5 md:gap-1">
+          <span className="text-lg md:text-2xl xl:text-3xl font-semibold tracking-tight" style={{ color: "white" }}>{value}</span>
+          <span className="text-[9px] md:text-xs xl:text-sm font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>{unit}</span>
         </div>
         {secondaryValue && (
-          <span className="text-xs" style={{ color: "hsl(220, 10%, 45%)" }}>{secondaryValue}</span>
+          <span className="text-[8px] md:text-xs" style={{ color: "hsl(220, 10%, 45%)" }}>{secondaryValue}</span>
         )}
       </div>
 
       {/* Sparkline */}
       {history.length > 3 && (
-        <div className="-mx-2 -mb-1" style={{ marginTop: controls ? "2px" : "8px" }}>
-          <ResponsiveContainer width="100%" height={controls ? 32 : 48}>
+        <div className="-mx-1 md:-mx-2 -mb-1" style={{ marginTop: controls ? "2px" : "6px" }}>
+          <ResponsiveContainer width="100%" height={controls ? 24 : 36}>
             <AreaChart data={history.slice(-72)}>
               <defs>
                 <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
@@ -105,7 +105,7 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
 
       {/* Inline controls */}
       {controls && (
-        <div className="flex gap-1 mt-1.5">
+        <div className="flex gap-0.5 md:gap-1 mt-1">
           {controls.buttons.map(btn => {
             const isActive = activeVal === btn.value;
             const isLoading = loading === btn.value;
@@ -114,14 +114,14 @@ export default function SensorCard({ label, value, unit, secondaryValue, color, 
                 key={btn.value}
                 onClick={() => handleControl(btn.value)}
                 disabled={isLoading}
-                className="flex-1 py-1 xl:py-1.5 rounded text-[9px] xl:text-[10px] font-semibold transition-all active:scale-95 touch-manipulation"
+                className="flex-1 py-0.5 md:py-1 xl:py-1.5 rounded text-[7px] md:text-[9px] xl:text-[10px] font-semibold transition-all active:scale-95 touch-manipulation"
                 style={{
                   background: isActive ? `${color}25` : "hsl(220, 15%, 13%)",
                   border: `1px solid ${isActive ? color : "hsl(220, 15%, 18%)"}`,
                   color: isActive ? color : "hsl(220, 10%, 42%)",
                 }}
               >
-                {isLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin mx-auto" /> : btn.label}
+                {isLoading ? <Loader2 className="w-2 h-2 animate-spin mx-auto" /> : btn.label}
               </button>
             );
           })}
