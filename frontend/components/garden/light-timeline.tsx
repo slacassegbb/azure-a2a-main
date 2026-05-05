@@ -128,27 +128,33 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
   const dayRange   = sunsetEndFrac - sunriseFrac || 1;
   const dayProg    = isDaytime ? (progress - sunriseFrac) / dayRange : 0;
 
-  const sunX = PAD + dayProg * arcW;
+  // Arc spans only from the sunrise handle to the sunset handle
+  const arcStartX = PAD + (displaySunrise / 24) * arcW;
+  const arcEndX   = PAD + (displaySunset  / 24) * arcW;
+  const arcSpanX  = arcEndX - arcStartX;
+
+  const sunX = arcStartX + dayProg * arcSpanX;
   const sunY = GNDLINE - Math.sin(dayProg * Math.PI) * ARC_H;
 
-  // Moon travels the same arc at night
+  // Moon arc at night: X follows the actual clock position, Y follows a separate night sine arc
   const nightDuration = (1 - sunsetEndFrac) + sunriseFrac;
   const nightProg = !isDaytime
     ? (progress > sunsetEndFrac
         ? (progress - sunsetEndFrac) / nightDuration
         : (progress + 1 - sunsetEndFrac) / nightDuration)
     : 0;
-  // Moon travels right→left (sunset side to sunrise side)
-  const moonX = PAD + (1 - nightProg) * arcW;
-  const moonY = GNDLINE - Math.sin((1 - nightProg) * Math.PI) * ARC_H;
+  // Moon X = current time on the linear timeline (so 10:51 PM → near right edge)
+  const moonX = PAD + progress * arcW;
+  // Moon Y = independent sine arc peaking at the midpoint of night (not tied to noon)
+  const moonY = GNDLINE - Math.sin(nightProg * Math.PI) * ARC_H;
 
   const sky    = SKY[phase]    ?? SKY.night;
   const ground = GROUND[phase] ?? GROUND.night;
 
-  // Arc path
+  // Arc path: drawn only between sunrise and sunset handles
   const arcPts: [number, number][] = Array.from({ length: 81 }, (_, i) => {
     const t = i / 80;
-    return [PAD + t * arcW, GNDLINE - Math.sin(t * Math.PI) * ARC_H];
+    return [arcStartX + t * arcSpanX, GNDLINE - Math.sin(t * Math.PI) * ARC_H];
   });
   const arcD = `M ${arcPts.map(([x, y]) => `${x},${y}`).join(" L ")}`;
 
@@ -302,7 +308,7 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
           const hf = (d.getHours() + d.getMinutes() / 60) / 24;
           if (hf < sunriseFrac || hf > sunsetEndFrac) return null;
           const t = (hf - sunriseFrac) / dayRange;
-          const x = PAD + t * arcW;
+          const x = arcStartX + t * arcSpanX;
           const y = GNDLINE - (r.light! / 100) * Math.sin(t * Math.PI) * ARC_H;
           return <circle key={i} cx={x} cy={y} r={3} fill="#FFD700" opacity={0.55} />;
         })}

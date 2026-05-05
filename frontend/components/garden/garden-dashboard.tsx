@@ -215,14 +215,6 @@ export default function GardenDashboard() {
         {/* Middle row: Irrigation+Status+Pots | Agent Log */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4">
           <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <IrrigationTile onRefresh={fetchData} />
-              <SystemStatus data={data} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <NextEvent schedule={schedule} />
-              <LastAction log={data?.garden_log || []} />
-            </div>
             <PotWeightTile
               config={data?.garden_config || null}
               scaleWeights={(() => {
@@ -244,6 +236,14 @@ export default function GardenDashboard() {
                 await sendControl("tare_scale", { scale_id: scaleId });
               }}
             />
+            <div className="grid grid-cols-2 gap-2">
+              <IrrigationTile onRefresh={fetchData} />
+              <SystemStatus data={data} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <NextEvent schedule={schedule} />
+              <LastAction log={data?.garden_log || []} />
+            </div>
           </div>
           <AgentLog entries={data?.garden_log || []} />
         </div>
