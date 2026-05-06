@@ -786,6 +786,12 @@ void uploadMoistureData() {
       arrEnd--; // back to the ]
       if (depth == 0 && arrEnd > arrStart) {
         readings = existing.substring(arrStart + 1, arrEnd);
+        // Strip leading/trailing commas — can occur if a previous blob upload
+        // was interrupted mid-write, leaving a partially corrupted array.
+        while (readings.length() > 0 && readings[0] == ',')
+          readings = readings.substring(1);
+        while (readings.length() > 0 && readings[readings.length()-1] == ',')
+          readings = readings.substring(0, readings.length()-1);
       }
     }
   }
