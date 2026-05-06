@@ -1407,6 +1407,35 @@ def main():
                 parts=parts,
             )
 
+            # 3b) Check for a pending question from any agent — generic reply routing.
+            #     Any agent can save {"pending_question": {"question": "...", "agent_name": "..."}}
+            #     to its config. If found, we inject context so the orchestrator routes the reply
+            #     back to that agent instead of treating it as a new request.
+            try:
+                from azure.storage.blob import BlobServiceClient as _BSC
+                _iot_url = f"https://{os.getenv('IOT_BLOB_ACCOUNT','')}.blob.core.windows.net"
+                _iot_cred = __import__('azure.identity', fromlist=['DefaultAzureCredential']).DefaultAzureCredential()
+                _blob_svc = _BSC(account_url=_iot_url, credential=_iot_cred)
+                _container = os.getenv("IOT_BLOB_CONTAINER", "garden-images")
+                _safe_uid = user_id.replace("/", "_").replace("\\", "_")
+                _cfg_blob = _blob_svc.get_blob_client(container=_container, blob=f"garden-config-{_safe_uid}.json")
+                _cfg = json.loads(_cfg_blob.download_blob().readall())
+                _pq = _cfg.get("pending_question")
+                if _pq and _pq.get("question") and _pq.get("agent_name"):
+                    _q = _pq["question"]
+                    _agent = _pq["agent_name"]
+                    log_info(f"[SMS Incoming] Pending question from {_agent}: routing reply as ANSWER_MODE")
+                    _answer = message_body or ""
+                    _injected = (
+                        f"ANSWER_MODE: The user is replying to a question your {_agent} previously asked via SMS.\n"
+                        f"Question asked: \"{_q}\"\n"
+                        f"User's answer: \"{_answer}\"\n"
+                        f"Route ONLY to {_agent} to save this answer and confirm back. Do NOT run a full garden check."
+                    )
+                    parts = [Part(root=TextPart(text=_injected))]
+            except Exception as _pq_err:
+                log_warning(f"[SMS Incoming] Could not check pending question: {_pq_err}")
+
             # 4) Enable only ONLINE agents for this SMS session
             from service.agent_registry import get_session_registry
             session_registry = get_session_registry()

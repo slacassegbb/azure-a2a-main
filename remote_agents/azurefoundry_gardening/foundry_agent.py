@@ -507,6 +507,36 @@ class FoundryGardeningAgent:
         except Exception:
             return []
 
+    def _save_pending_question(self, question: str, user_id: str = "default"):
+        """Save the last question asked by this agent so SMS replies can be routed back."""
+        try:
+            config = self._read_garden_config_full(user_id)
+            config["pending_question"] = {
+                "question": question,
+                "agent_name": "Home Gardening Agent",
+                "asked_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            self._write_garden_config_full(config, user_id)
+        except Exception as e:
+            logger.warning(f"Failed to save pending question: {e}")
+
+    def _clear_pending_question(self, user_id: str = "default"):
+        """Clear pending question after it has been answered."""
+        try:
+            config = self._read_garden_config_full(user_id)
+            config.pop("pending_question", None)
+            self._write_garden_config_full(config, user_id)
+        except Exception as e:
+            logger.warning(f"Failed to clear pending question: {e}")
+
+    def _extract_question(self, text: str) -> str:
+        """Extract the question text from a ❓ Questions section if present."""
+        import re
+        match = re.search(r'❓\s*\*?\*?Questions?\*?\*?[:\s]*(.*?)(?:\n\n|\Z)', text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip().split('\n')[0].strip()
+        return ""
+
     def _clean_log_summary(self, text: str) -> str:
         """Strip verbose image description blocks and keep only action/decision text."""
         import re
@@ -1074,7 +1104,15 @@ You are a professional gardener. The Garden Description tells you what was plant
 - **Vegetative** → full light (80-100%), humidity 50-60%, good airflow
 - **Flowering/Fruiting** → strong light, humidity 40-50%, strong airflow
 
-**Every run, do this:**
+**ANSWER_MODE — when the message starts with "ANSWER_MODE:":**
+The user is replying via SMS to a question you previously asked. Do NOT run a full garden check.
+1. Read the question and answer from the message
+2. Call `save_garden_note` with the appropriate key and value
+3. Call `_clear_pending_question` (use `save_garden_note` with key="pending_question_cleared" value="true" as a signal — the backend handles actual clearing)
+4. Reply with a friendly short confirmation, e.g. "Got it, I've noted you're growing basil! 🌿 I'll use this to tailor your garden care."
+Do nothing else.
+
+**Every run, do this (normal mode):**
 1. Take a photo, read sensors (weight, temp, humidity), read current light schedule
 2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
@@ -1851,10 +1889,19 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         except Exception as e:
             logger.warning(f"Failed to load garden log: {e}")
 
+        # Detect ANSWER_MODE — user is replying to a question we asked via SMS
+        _is_answer_mode = user_message.strip().startswith("ANSWER_MODE:")
+        if _is_answer_mode:
+            # Clear the pending question now — we're handling the answer
+            try:
+                await asyncio.to_thread(self._clear_pending_question, _user_id)
+            except Exception:
+                pass
+
         # Build conversation history for the loop
         conversation = [{"role": "user", "content": user_message}]
         all_images: List[tuple] = []
-        max_rounds = 4  # safety limit
+        max_rounds = 2 if _is_answer_mode else 4  # answer mode needs fewer rounds
 
         yield "Analyzing your request..."
 
@@ -2028,6 +2075,16 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                         await asyncio.to_thread(self._append_garden_log, final_text[:3000], _user_id)
                     except Exception as e:
                         logger.warning(f"Failed to append garden log: {e}")
+                    # Save any question asked so SMS replies can be routed back to us
+                    try:
+                        question = self._extract_question(final_text)
+                        if question:
+                            await asyncio.to_thread(self._save_pending_question, question, _user_id)
+                            logger.info(f"Saved pending question for SMS reply routing: {question[:80]}")
+                        else:
+                            await asyncio.to_thread(self._clear_pending_question, _user_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to save pending question: {e}")
                 else:
                     yield "I analyzed your garden but couldn't generate a response. Please try again."
                 return
