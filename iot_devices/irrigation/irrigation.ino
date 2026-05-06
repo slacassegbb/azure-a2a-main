@@ -36,8 +36,10 @@ const char* AZURE_API_VERSION  = "2023-11-03";
 #define MOISTURE_PIN 9
 #define LIGHT_DIM_PIN 15  // PWM output to Mean Well XLG-100 DIM+ wire
 #define TEMP_PIN 6        // DS18B20 OneWire data pin
-#define WEIGHT_DT_PIN 17  // HX711 data pin
-#define WEIGHT_SCK_PIN 16 // HX711 clock pin
+#define WEIGHT_DT_PIN 17   // HX711 #1 data pin
+#define WEIGHT_SCK_PIN 16  // HX711 #1 clock pin
+#define WEIGHT2_DT_PIN 13  // HX711 #2 data pin
+#define WEIGHT2_SCK_PIN 12 // HX711 #2 clock pin
 const unsigned long DEFAULT_IRRIGATION_MS = 120000; // 2-minute default
 const unsigned long MOISTURE_READ_INTERVAL_MS = 5000; // read every 5 seconds
 const unsigned long MOISTURE_UPLOAD_INTERVAL_MS = 300000; // upload to blob every 5 minutes
@@ -65,6 +67,12 @@ const unsigned long FAN_POLL_MS = 30000;  // poll fan command blob every 30s
 // ===========================
 const char* VALVE_COMMAND_BLOB = "valve-command.json";
 const unsigned long VALVE_POLL_MS = 5000;  // poll every 5s (same as irrigation)
+
+// ===========================
+// Tare command
+// ===========================
+const char* TARE_COMMAND_BLOB = "tare-command.json";
+String lastTareRequestId = "";
 
 // ===========================
 // Polling
@@ -138,6 +146,8 @@ WebServer server(80);
 // ===========================
 HX711 scale;
 float lastWeightG = 0.0;
+HX711 scale2;
+float lastWeight2G = 0.0;
 unsigned long lastWeightReadMs = 0;
 const unsigned long WEIGHT_READ_INTERVAL_MS = 30000;  // read every 30s
 const float WEIGHT_CALIBRATION = 636.0;  // calibrated: 6oz iPhone = 170g
@@ -752,7 +762,8 @@ void uploadMoistureData() {
                   + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "")
                   + ",\"light\":" + String(constrain(currentBrightness, 0, 100))
                   + ",\"fan\":" + String(fanOn ? fanSpeed : 0)
-                  + ",\"weight_g\":" + String(lastWeightG, 1) + "}";
+                  + ",\"weight_g\":" + String(lastWeightG, 1)
+                  + ",\"weight2_g\":" + String(lastWeight2G, 1) + "}";
 
   // Download existing history
   String existing = downloadBlob(String(MOISTURE_BLOB_NAME));
@@ -805,6 +816,7 @@ void uploadMoistureData() {
               + ",\"pct\":" + String(moisturePct)
               + ",\"temp_c\":" + String(lastTempC, 1)
               + ",\"weight_g\":" + String(lastWeightG, 1)
+              + ",\"weight2_g\":" + String(lastWeight2G, 1)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + "},\"readings\":[" + readings + "]}";
@@ -1033,12 +1045,63 @@ void readTemperature() {
 void readWeight() {
   if (millis() - lastWeightReadMs < WEIGHT_READ_INTERVAL_MS) return;
   lastWeightReadMs = millis();
-  if (!scale.is_ready()) {
-    Serial.println("[WEIGHT] HX711 not ready");
-    return;
+  if (scale.is_ready()) {
+    lastWeightG = scale.get_units(10);
+    Serial.print("[WEIGHT] Scale1: " + String(lastWeightG, 1) + "g");
+  } else {
+    Serial.print("[WEIGHT] Scale1: not ready");
   }
-  lastWeightG = scale.get_units(10);  // average of 10 readings
-  Serial.println("[WEIGHT] " + String(lastWeightG, 1) + "g");
+  if (scale2.is_ready()) {
+    lastWeight2G = scale2.get_units(10);
+    Serial.println("  Scale2: " + String(lastWeight2G, 1) + "g");
+  } else {
+    Serial.println("  Scale2: not ready");
+  }
+}
+
+void pollTareCommand() {
+  // Share poll timing with valve (every 5s)
+  static unsigned long lastTarePollMs = 0;
+  if (millis() - lastTarePollMs < VALVE_POLL_MS) return;
+  lastTarePollMs = millis();
+
+  String body = downloadBlob(String(TARE_COMMAND_BLOB));
+  if (body.length() < 5) return;
+
+  // Extract request_id
+  int idStart = body.indexOf("\"request_id\"");
+  if (idStart < 0) return;
+  int colonPos = body.indexOf(':', idStart);
+  int quoteStart = body.indexOf('"', colonPos + 1);
+  int quoteEnd = body.indexOf('"', quoteStart + 1);
+  if (quoteStart < 0 || quoteEnd < 0) return;
+  String requestId = body.substring(quoteStart + 1, quoteEnd);
+
+  if (requestId == lastTareRequestId) return;
+  lastTareRequestId = requestId;
+  prefs.putString("lastTareReq", requestId);
+
+  // Parse which scale: "1", "2", "all", "scale_1", "scale_2"
+  String which = "all";
+  int sStart = body.indexOf("\"scale\"");
+  if (sStart >= 0) {
+    int sQuoteStart = body.indexOf('"', body.indexOf(':', sStart) + 1);
+    int sQuoteEnd = body.indexOf('"', sQuoteStart + 1);
+    if (sQuoteStart >= 0 && sQuoteEnd >= 0) {
+      which = body.substring(sQuoteStart + 1, sQuoteEnd);
+    }
+  }
+
+  String result = "";
+  if (which == "1" || which == "scale_1" || which == "all") {
+    if (scale.is_ready()) { scale.tare(); prefs.putLong("scaleOff1", scale.get_offset()); result += "Scale1 tared. "; }
+    else result += "Scale1 not ready. ";
+  }
+  if (which == "2" || which == "scale_2" || which == "all") {
+    if (scale2.is_ready()) { scale2.tare(); prefs.putLong("scaleOff2", scale2.get_offset()); result += "Scale2 tared. "; }
+    else result += "Scale2 not ready. ";
+  }
+  Serial.println("[TARE] " + result);
 }
 
 void handleRoot()   { server.send(200, "text/html", htmlPage()); }
@@ -1055,7 +1118,8 @@ void handleStatus() {
               + ",\"moisture_instant\":" + String(instantRaw)
               + ",\"moisture_pct\":" + String(moisturePct)
               + ",\"temp_c\":" + String(lastTempC, 1)
-              + ",\"weight_g\":" + String(lastWeightG, 1) + "}";
+              + ",\"weight_g\":" + String(lastWeightG, 1)
+              + ",\"weight2_g\":" + String(lastWeight2G, 1) + "}";
   server.send(200, "application/json", json);
 }
 
@@ -1135,6 +1199,20 @@ void setup() {
     digitalWrite(VALVE_C_PIN, HIGH);
     Serial.println("[VALVE] Test: C + pump for " + String(secs) + "s");
   });
+  server.on("/tare", []() {
+    String which = server.hasArg("s") ? server.arg("s") : "all";
+    String result = "";
+    if (which == "1" || which == "all") {
+      if (scale.is_ready()) { scale.tare(); prefs.putLong("scaleOff1", scale.get_offset()); result += "Scale1 tared. "; }
+      else result += "Scale1 not ready. ";
+    }
+    if (which == "2" || which == "all") {
+      if (scale2.is_ready()) { scale2.tare(); prefs.putLong("scaleOff2", scale2.get_offset()); result += "Scale2 tared. "; }
+      else result += "Scale2 not ready. ";
+    }
+    server.send(200, "text/plain", result);
+    Serial.println("[TARE] " + result);
+  });
   server.begin();
 
   lastLightRequestId = prefs.getString("lastLightReq", "");
@@ -1143,6 +1221,8 @@ void setup() {
   Serial.println("Restored lastFanRequestId: " + (lastFanRequestId.length() ? lastFanRequestId : "(none)"));
   lastValveRequestId = prefs.getString("lastValveReq", "");
   Serial.println("Restored lastValveRequestId: " + (lastValveRequestId.length() ? lastValveRequestId : "(none)"));
+  lastTareRequestId = prefs.getString("lastTareReq", "");
+  Serial.println("Restored lastTareRequestId: " + (lastTareRequestId.length() ? lastTareRequestId : "(none)"));
 
   tempSensor.begin();
   Serial.println("Temperature sensor on GPIO " + String(TEMP_PIN) + " — " + String(tempSensor.getDeviceCount()) + " device(s) found");
@@ -1156,9 +1236,36 @@ void setup() {
     Serial.print(".");
   }
   if (scale.is_ready()) {
-    Serial.println("\nWeight scale ready (DT=" + String(WEIGHT_DT_PIN) + " SCK=" + String(WEIGHT_SCK_PIN) + ")");
+    // Restore saved tare offset from flash
+    int32_t savedOffset1 = prefs.getLong("scaleOff1", 0);
+    if (savedOffset1 != 0) {
+      scale.set_offset(savedOffset1);
+      Serial.println("\nScale1 ready (restored tare offset)");
+    } else {
+      Serial.println("\nScale1 ready (no saved tare — raw values)");
+    }
   } else {
-    Serial.println("\n[WEIGHT] HX711 not found — check wiring on GPIO 16/17");
+    Serial.println("\n[WEIGHT] Scale1 not found — check wiring on GPIO " + String(WEIGHT_SCK_PIN) + "/" + String(WEIGHT_DT_PIN));
+  }
+
+  scale2.begin(WEIGHT2_DT_PIN, WEIGHT2_SCK_PIN);
+  scale2.set_scale(WEIGHT_CALIBRATION);
+  Serial.print("Waiting for HX711 #2");
+  unsigned long hx711Wait2 = millis();
+  while (!scale2.is_ready() && millis() - hx711Wait2 < 3000) {
+    delay(100);
+    Serial.print(".");
+  }
+  if (scale2.is_ready()) {
+    int32_t savedOffset2 = prefs.getLong("scaleOff2", 0);
+    if (savedOffset2 != 0) {
+      scale2.set_offset(savedOffset2);
+      Serial.println("\nScale2 ready (restored tare offset)");
+    } else {
+      Serial.println("\nScale2 ready (no saved tare — raw values)");
+    }
+  } else {
+    Serial.println("\n[WEIGHT] Scale2 not found — check wiring on GPIO " + String(WEIGHT2_SCK_PIN) + "/" + String(WEIGHT2_DT_PIN));
   }
   Serial.println("Moisture sensor on GPIO " + String(MOISTURE_PIN));
   Serial.println("Kasa light: " + String(strlen(KASA_LIGHT_IP) ? KASA_LIGHT_IP : "(not configured)"));
@@ -1211,4 +1318,5 @@ void loop() {
   updateLights();
   pollFanCommand();
   pollValveCommand();
+  pollTareCommand();
 }

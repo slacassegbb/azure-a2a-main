@@ -3545,38 +3545,35 @@ Answer with just JSON:
         
         context_parts = []
 
-        # When memory is OFF in agent mode, only retrieve document content
-        # (DocumentProcessor entries), not old conversation history that can
-        # inject stale/error context from previous runs.
+        # When memory is explicitly OFF, skip memory search entirely.
+        # This prevents stale DocumentProcessor image analyses and old
+        # conversation history from contaminating agent prompts (e.g.
+        # scheduled workflows injecting months-old garden descriptions).
         enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
-        memory_docs_only = is_agent_mode and not enable_memory
-        if memory_docs_only:
-            log_debug(f"[_add_context_to_message] Memory OFF — will only use DocumentProcessor entries")
-
-        try:
-            # Retrieve top 10 memory results to ensure we get all chunks of large documents
-            # This allows chunk reassembly to work correctly for multi-chunk documents
-            # and ensures agents have sufficient context from past interactions
-            top_k_results = 10
-            # Use contextvar for async-safe context isolation (fixes stale session_context issue)
-            effective_context_id = _current_context_id.get() or session_context.contextId
-            log_debug(f"[_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
-            memory_results = await self._search_relevant_memory(
-                query=message,
-                context_id=effective_context_id,
-                agent_name=None,
-                top_k=top_k_results
-            )
-            # When memory is OFF, filter to only document extractions
-            if memory_docs_only and memory_results:
-                memory_results = [r for r in memory_results if r.get('agent_name') == 'DocumentProcessor']
-                log_debug(f"[_add_context_to_message] Filtered to {len(memory_results)} DocumentProcessor result(s)")
+        if not enable_memory:
+            log_debug(f"[_add_context_to_message] Memory OFF — skipping memory search entirely")
+        
+        if enable_memory:
+            try:
+                # Retrieve top 10 memory results to ensure we get all chunks of large documents
+                # This allows chunk reassembly to work correctly for multi-chunk documents
+                # and ensures agents have sufficient context from past interactions
+                top_k_results = 10
+                # Use contextvar for async-safe context isolation (fixes stale session_context issue)
+                effective_context_id = _current_context_id.get() or session_context.contextId
+                log_debug(f"[_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
+                memory_results = await self._search_relevant_memory(
+                    query=message,
+                    context_id=effective_context_id,
+                    agent_name=None,
+                    top_k=top_k_results
+                    )
             
-            if memory_results:
-                context_parts.append("Relevant context from previous interactions:")
-                
-                # Process memory results to extract key information
-                for i, result in enumerate(memory_results, 1):
+                if memory_results:
+                    context_parts.append("Relevant context from previous interactions:")
+                    
+                    # Process memory results to extract key information
+                    for i, result in enumerate(memory_results, 1):
                         try:
                             agent_name = result.get('agent_name', 'Unknown')
                             timestamp = result.get('timestamp', 'Unknown')
@@ -3698,13 +3695,13 @@ Answer with just JSON:
                         except Exception as e:
                             log_warning(f"Error processing memory result {i}: {e}")
                             continue
-                
-            else:
-                log_debug(f"No relevant memory context found")
-        
-        except Exception as e:
-            log_error(f"Error searching memory: {e}")
-            context_parts.append("Note: Unable to retrieve relevant context from memory")
+                    
+                else:
+                    log_debug(f"No relevant memory context found")
+            
+            except Exception as e:
+                log_error(f"Error searching memory: {e}")
+                context_parts.append("Note: Unable to retrieve relevant context from memory")
         
         # NOTE: host_turn_history injection has been removed.
         # GPT-4 is now instructed to include all relevant context from previous agents

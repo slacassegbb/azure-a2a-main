@@ -415,8 +415,8 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             agent_online = False
             for attempt in range(2):
                 try:
-                    timeout = 5.0 if attempt == 0 else 20.0
-                    async with httpx.AsyncClient(timeout=timeout) as client:
+                    health_timeout = 5.0 if attempt == 0 else 20.0
+                    async with httpx.AsyncClient(timeout=health_timeout) as client:
                         resp = await client.get(f"{url}/health")
                         if resp.status_code == 200:
                             agent_online = True
@@ -497,9 +497,10 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     
     log_debug(f"[SCHEDULER] Message created: {initial_message}")
     
-    # Scale timeout by step count: 60s per step, minimum 120s, capped at timeout param
+    # Use the configured timeout directly — the schedule owner knows best
+    # Minimum 120s to avoid premature kills on cold-start agents
     num_steps = len(workflow.steps or [])
-    effective_timeout = max(120, min(timeout, max(120, num_steps * 60)))
+    effective_timeout = max(120, timeout)
     log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s (timeout param={timeout}, steps={num_steps})")
     
     try:
@@ -1334,6 +1335,11 @@ def main():
         Called by the Twilio agent when an SMS arrives that is NOT a HITL reply.
         Looks up the user by phone number, enables agents, and runs process_message.
         The orchestrator response is delivered back via /internal/send-sms on the Twilio agent.
+
+        NOTE: This endpoint is SMS-specific today but the pending-question routing logic
+        below is intentionally generic (keyed by agent_name, not SMS-specific). If we add
+        more inbound channels (WhatsApp, Slack, etc.), this handler should be refactored
+        into a shared /api/channel/incoming endpoint that all channel agents call into.
         """
         api_key = request.headers.get("X-Internal-API-Key", "")
         if api_key != CREDENTIAL_SERVICE_API_KEY:

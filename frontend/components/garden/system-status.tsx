@@ -24,6 +24,7 @@ export default function SystemStatus({ data }: SystemStatusProps) {
   const lastValve = data?.valve?.valve || null;
   const humidifierOn = data?.humidifier?.current?.is_on || false;
   const weightG = data?.moisture?.current?.weight_g ?? null;
+  const weight2G = data?.moisture?.current?.weight2_g ?? null;
 
   const pills: StatusPill[] = [
     {
@@ -55,11 +56,18 @@ export default function SystemStatus({ data }: SystemStatusProps) {
       color: "hsl(270, 70%, 65%)",
     },
     {
-      label: "Scale",
+      label: "Scale 1",
       status: weightG != null ? `${weightG.toFixed(0)}g` : "N/A",
       active: weightG != null && weightG > 0,
       icon: Scale,
       color: "hsl(152, 75%, 50%)",
+    },
+    {
+      label: "Scale 2",
+      status: weight2G != null ? `${weight2G.toFixed(0)}g` : "N/A",
+      active: weight2G != null && weight2G > 0,
+      icon: Scale,
+      color: "hsl(340, 75%, 55%)",
     },
   ];
 

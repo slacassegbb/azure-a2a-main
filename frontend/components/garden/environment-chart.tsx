@@ -320,36 +320,78 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
               connectNulls
             />
           )}
-          {events.map((ev, i) => {
-            const evTime = formatTime(ev.ts);
+          {(() => {
+            if (chartData.length === 0) return [];
+            const chartStartMs = new Date(chartData[0].ts).getTime();
+            const chartEndMs   = new Date(chartData[chartData.length - 1].ts).getTime();
+            // Filter to visible window, then deduplicate consecutive same-value events
+            const visible = events.filter(ev => {
+              const t = new Date(ev.ts).getTime();
+              return t >= chartStartMs && t <= chartEndMs;
+            });
+            const lastSeen: Record<string, string> = {};
+            const deduped = visible.filter(ev => {
+              const key = ev.type || "other";
+              const val = ev.detail || "";
+              if (lastSeen[key] === val) return false;
+              lastSeen[key] = val;
+              return true;
+            });
+            // Pre-group by snapped time so labels in the same column are staggered
+            const timeIndex: Record<string, number> = {};
+            return deduped.map((ev, i) => {
+            // Snap event to nearest chartData point so ReferenceLine x always matches
+            const evMs = new Date(ev.ts).getTime();
+            const nearest = chartData.reduce((best, d) => {
+              const diff = Math.abs(new Date(d.ts).getTime() - evMs);
+              return diff < best.diff ? { time: d.time, diff } : best;
+            }, { time: chartData[0].time, diff: Infinity });
+            const evTime = nearest.time;
+            const posInGroup = timeIndex[evTime] ?? 0;
+            timeIndex[evTime] = posInGroup + 1;
             const type = ev.type || "";
-            const isValve    = type === "valve" || type === "irrigate";
-            const isLight    = type === "light";
-            const isFan      = type === "fan";
+            const isValve = type === "valve" || type === "irrigate";
+            const isLight = type === "light";
+            const isFan   = type === "fan";
             const color = isValve ? "hsl(152, 75%, 50%)"
                         : isLight ? "hsl(48, 95%, 60%)"
                         : isFan   ? "hsl(185, 85%, 55%)"
                         : "hsl(220, 10%, 55%)";
-            const icon  = isValve ? "💧"
-                        : isLight ? "☀"
-                        : isFan   ? "💨"
-                        : "•";
-            // Short readable detail: e.g. "A 2m", "60%", "OFF"
+            const icon   = isValve ? "💧" : isLight ? "☀" : isFan ? "💨" : "•";
             const detail = ev.detail
               ? ev.detail.replace("Valve A (plain water)", "A").replace("Valve B (grow nutrients)", "B").replace("Valve C (bloom nutrients)", "C")
-                  .replace(/\d+s$/, m => `${Math.round(parseInt(m)/60)}m`).slice(0, 12)
+                  .replace(/\d+s$/, m => `${Math.round(parseInt(m) / 60)}m`).slice(0, 10)
               : "";
+            const labelText = `${icon} ${detail}`.trim();
+            const yOffset = 12 + posInGroup * 13;
             return (
               <ReferenceLine
                 key={`ev-${i}`}
                 x={evTime}
                 stroke={color}
-                strokeDasharray={isValve ? "4 3" : "2 4"}
+                strokeDasharray={isValve ? "4 3" : "2 5"}
                 strokeWidth={isValve ? 2 : 1.5}
-                label={{ value: `${icon} ${detail}`.trim(), position: "insideTopLeft", fontSize: 10, fill: color, fontWeight: 600 }}
+                label={(props: any) => {
+                  const { viewBox } = props;
+                  const x = viewBox?.x ?? 0;
+                  const y = viewBox?.y ?? 0;
+                  return (
+                    <text
+                      x={x + 4}
+                      y={y + yOffset}
+                      fontSize={9}
+                      fontWeight={600}
+                      fill={color}
+                      style={{ pointerEvents: "none" }}
+                    >
+                      {labelText}
+                    </text>
+                  );
+                }}
               />
             );
-          })}
+            });
+          })()}
         </AreaChart>
       </ResponsiveContainer>
     </div>

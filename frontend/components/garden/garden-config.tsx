@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Settings, X, Check, Loader2 } from "lucide-react";
+import { Settings, X, Check, Loader2, Trash2 } from "lucide-react";
 
 export default function GardenConfig() {
   const [open, setOpen] = useState(false);
@@ -9,6 +9,8 @@ export default function GardenConfig() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     if (open && !loaded) {
@@ -31,6 +33,22 @@ export default function GardenConfig() {
       setTimeout(() => { setSaved(false); setOpen(false); }, 1000);
     } catch { /* ignore */ }
     finally { setSaving(false); }
+  };
+
+  const resetGarden = async () => {
+    setResetting(true);
+    try {
+      await fetch("/api/garden/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_garden" }),
+      });
+      setDescription("");
+      setLoaded(false);
+      setConfirmReset(false);
+      setOpen(false);
+    } catch { /* ignore */ }
+    finally { setResetting(false); }
   };
 
   return (
@@ -82,26 +100,61 @@ export default function GardenConfig() {
             />
 
             {/* Buttons */}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setOpen(false)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium"
-                style={{ color: "hsl(220, 10%, 55%)" }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95"
-                style={{
-                  background: saved ? "hsl(152, 75%, 50%, 0.3)" : "hsl(152, 75%, 50%, 0.15)",
-                  border: `1px solid ${saved ? "hsl(152, 75%, 50%)" : "hsl(152, 75%, 50%, 0.3)"}`,
-                  color: "hsl(152, 75%, 55%)",
-                }}
-              >
-                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : saved ? <><Check className="w-3 h-3 inline mr-1" />Saved</> : "Save"}
-              </button>
+            <div className="flex justify-between items-center">
+              {/* Reset — left side */}
+              <div>
+                {!confirmReset ? (
+                  <button
+                    onClick={() => setConfirmReset(true)}
+                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-colors hover:bg-red-500/10"
+                    style={{ color: "hsl(0, 70%, 55%)" }}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    New Garden
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={resetGarden}
+                      disabled={resetting}
+                      className="px-2 py-1.5 rounded-lg text-[10px] font-medium"
+                      style={{ background: "hsl(0, 70%, 50%, 0.2)", border: "1px solid hsl(0, 70%, 50%, 0.4)", color: "hsl(0, 70%, 60%)" }}
+                    >
+                      {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes, reset all"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmReset(false)}
+                      className="px-2 py-1.5 rounded-lg text-[10px] font-medium"
+                      style={{ color: "hsl(220, 10%, 55%)" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Save/Cancel — right side */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setOpen(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                  style={{ color: "hsl(220, 10%, 55%)" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95"
+                  style={{
+                    background: saved ? "hsl(152, 75%, 50%, 0.3)" : "hsl(152, 75%, 50%, 0.15)",
+                    border: `1px solid ${saved ? "hsl(152, 75%, 50%)" : "hsl(152, 75%, 50%, 0.3)"}`,
+                    color: "hsl(152, 75%, 55%)",
+                  }}
+                >
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : saved ? <><Check className="w-3 h-3 inline mr-1" />Saved</> : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </>

@@ -121,13 +121,13 @@ export async function POST(request: NextRequest) {
         }
       }
       case "set_pot_weight": {
-        const { pot_id = "pot_1", weight_type = "dry", name } = body;
+        const { pot_id = "scale_1", weight_type = "dry", name } = body;
         try {
-          // Read current weight from moisture sensor
+          // Read current weight from the correct scale
           const moisture = await readBlob("moisture-data.json");
-          const weightG = moisture?.current?.weight_g;
+          const weightG = pot_id === "scale_2" ? moisture?.current?.weight2_g : moisture?.current?.weight_g;
           if (weightG == null) {
-            return NextResponse.json({ success: false, message: "No weight data from scale" }, { status: 400 });
+            return NextResponse.json({ success: false, message: `No weight data from ${pot_id}` }, { status: 400 });
           }
 
           // Read existing config
@@ -178,6 +178,11 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, message: `Failed: ${e.message}` }, { status: 500 });
         }
       }
+      case "tare_scale": {
+        const { scale_id = "all" } = body;
+        await writeBlob("tare-command.json", { request_id: requestId, scale: scale_id });
+        return NextResponse.json({ success: true, request_id: requestId, message: `Tare command sent for ${scale_id === "all" ? "all scales" : scale_id}` });
+      }
       case "set_humidifier": {
         // Route through backend to gardening agent
         const { action: humAction = "status", target_humidity } = body;
@@ -210,6 +215,61 @@ export async function POST(request: NextRequest) {
         } catch (e: any) {
           return NextResponse.json({ success: false, message: `Failed: ${e.message}` });
         }
+      }
+      case "reset_garden": {
+        // Full garden reset — clear ALL data for a fresh start
+        const resetBlobs = [
+          `garden-config-${USER_ID}.json`,
+          `garden-log-${USER_ID}.json`,
+          `garden-events.json`,
+          `humidifier-status.json`,
+        ];
+        // Reset light schedule to defaults instead of deleting
+        const defaultLightSchedule = {
+          request_id: requestId,
+          sunrise_hour: 5,
+          sunrise_ramp_min: 90,
+          peak_brightness: 100,
+          sunset_hour: 20,
+          sunset_ramp_min: 90,
+          night_brightness: 0,
+        };
+
+        const deleted: string[] = [];
+        const resetClient = BlobServiceClient.fromConnectionString(CONN_STR);
+        const resetContainer = resetClient.getContainerClient(CONTAINER);
+
+        // Delete config/log/events/humidifier blobs
+        for (const name of resetBlobs) {
+          try {
+            await resetContainer.getBlockBlobClient(name).deleteIfExists();
+            deleted.push(name);
+          } catch { /* ignore missing */ }
+        }
+
+        // Reset light schedule to defaults
+        try {
+          await writeBlob("light-schedule.json", defaultLightSchedule);
+          deleted.push("light-schedule.json (reset to defaults)");
+        } catch { /* ignore */ }
+
+        // Delete all historical timestamped images (YYYY-MM-DD_HH-MM-SS.jpg)
+        let imagesDeleted = 0;
+        try {
+          const tsPattern = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.(jpg|jpeg|png)$/;
+          for await (const blob of resetContainer.listBlobsFlat()) {
+            if (tsPattern.test(blob.name)) {
+              await resetContainer.getBlockBlobClient(blob.name).deleteIfExists();
+              imagesDeleted++;
+            }
+          }
+          if (imagesDeleted > 0) deleted.push(`${imagesDeleted} historical images`);
+        } catch { /* ignore */ }
+
+        return NextResponse.json({
+          success: true,
+          message: `Garden reset — cleared ${deleted.length} items${imagesDeleted > 0 ? ` (including ${imagesDeleted} photos)` : ""}. Fresh start!`,
+        });
       }
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });

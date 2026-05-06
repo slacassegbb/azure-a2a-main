@@ -112,7 +112,7 @@ export default function GardenDashboard() {
         {/* Row 1: Camera + Light Cycle side by side */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
           <CameraFeed url={data?.camera_url} timestamp={data?.camera_timestamp} photos={data?.photos || []} />
-          <LightTimeline schedule={schedule} readings={moisture?.readings} />
+          <LightTimeline schedule={schedule} readings={moisture?.readings} gardenConfig={data?.garden_config} />
         </div>
 
         {/* Row 2: Sensor cards — 5 across (3 on mobile) */}

@@ -516,7 +516,7 @@ class FoundryGardeningAgent:
         text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
         # Collapse multiple blank lines
         text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()[:500]
+        return text.strip()[:2000]
 
     def _append_garden_log(self, summary: str, user_id: str = "default"):
         """Append an entry to the garden activity log."""
@@ -542,17 +542,27 @@ class FoundryGardeningAgent:
         except Exception as e:
             logger.warning(f"Failed to update garden log: {e}")
 
+    def _extract_short_summary(self, text: str, max_sentences: int = 3) -> str:
+        """Extract the first few complete sentences as a clean summary."""
+        import re
+        text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+        text = text.replace('#', '').strip()
+        # Split into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+        return ' '.join(sentences[:max_sentences])
+
     def _format_garden_log_for_context(self, entries: list) -> str:
         """Format recent log entries as context for the LLM."""
         if not entries:
             return ""
         recent = entries[-6:]  # last 6 entries (~18 hours)
-        lines = ["## Recent Garden Activity Log (decisions/actions only)"]
+        lines = ["## Recent Garden Activity Log"]
         for e in recent:
-            summary = e.get('summary', '')
-            # Hard truncate each entry and strip any leftover headers
-            summary = summary.replace('#', '').strip()[:200]
-            lines.append(f"- **{e.get('timestamp', '?')}**: {summary}")
+            summary = self._extract_short_summary(e.get('summary', ''))
+            if summary:
+                lines.append(f"- **{e.get('timestamp', '?')}**: {summary}")
         return "\n".join(lines)
 
     # ── Garden events (persistent, append-only) ────────────────────────
@@ -1066,11 +1076,12 @@ You are a professional gardener. The Garden Description tells you what was plant
 
 **Every run, do this:**
 1. Take a photo, read sensors (weight, temp, humidity), read current light schedule
-2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules
+2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
-4. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
-5. **IRRIGATION DECISION**: Examine BOTH the soil surface AND weight data. For seeds/germination, pay special attention to surface dryness (look closely at the top soil color and texture) — seeds need surface moisture even when deep soil has water. For established plants, weight-based watering is usually sufficient. Trust your gardening expertise.
-6. Report what you did and what you observed
+4. Call `update_growth_assessment` with what you visually observe — stage, estimated height %, brief notes. This feeds the dashboard and your own memory for next run. MANDATORY every run. If no green growth is visible above the soil, report height_pct=0 — do NOT guess or assume emergence.
+5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
+6. **IRRIGATION DECISION**: Examine BOTH the soil surface AND weight data. For seeds/germination, pay special attention to surface dryness (look closely at the top soil color and texture) — seeds need surface moisture even when deep soil has water. For established plants, weight-based watering is usually sufficient. Trust your gardening expertise.
+7. Report what you did and what you observed
 
 A run where you skip calling the three control tools is a FAILED run.
 
@@ -1373,6 +1384,30 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     },
                 },
                 "required": ["key", "value"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "update_growth_assessment",
+            "description": "Update the visual growth assessment based on what you see in the current photo. Call this EVERY RUN after analyzing the image. This feeds the dashboard plant display and your own memory for the next run so you can track progression.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "stage": {
+                        "type": "string",
+                        "enum": ["empty", "germination", "seedling", "vegetative", "flowering", "harvest"],
+                        "description": "Current growth stage based purely on visual observation of the photo.",
+                    },
+                    "height_pct": {
+                        "type": "integer",
+                        "description": "Estimated plant height as % of expected mature height (0=empty/just planted, 100=fully mature). Base this on what you actually see in the image.",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Brief visual observation, e.g. '2 seedlings ~3cm tall, healthy green color' or 'no sprouts yet, soil surface looks moist'",
+                    },
+                },
+                "required": ["stage", "height_pct", "notes"],
             },
         },
     ]
@@ -1714,6 +1749,25 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
             except Exception as e:
                 return f"Failed to save note: {e}", images_data
 
+        elif tool_name == "update_growth_assessment":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                stage = tool_args.get("stage", "unknown")
+                height_pct = int(tool_args.get("height_pct", 0))
+                notes = tool_args.get("notes", "")
+                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                config = await asyncio.to_thread(self._read_garden_config_full, user_id)
+                config["growth_assessment"] = {
+                    "stage": stage,
+                    "height_pct": max(0, min(100, height_pct)),
+                    "notes": notes,
+                    "assessed_at": ts,
+                }
+                await asyncio.to_thread(self._write_garden_config_full, config, user_id)
+                return f"Growth assessment saved: {stage}, {height_pct}% of mature size. {notes}", images_data
+            except Exception as e:
+                return f"Failed to save growth assessment: {e}", images_data
+
         return f"Unknown tool: {tool_name}", images_data
 
     async def _prepare_vision_input(self, user_message: str, all_images: List[tuple], context_id: str = "") -> List[Dict[str, Any]]:
@@ -1769,11 +1823,22 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         # Extract user_id from context_id for per-user memory
         _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
 
-        # Load garden config (user's garden description)
+        # Load garden config (user's garden description + growth assessment)
         try:
-            garden_config = await asyncio.to_thread(self._read_garden_config, _user_id)
-            if garden_config.strip():
-                instructions += "\n\n## Garden Description (from the user)\n" + garden_config
+            garden_config_full = await asyncio.to_thread(self._read_garden_config_full, _user_id)
+            garden_desc = garden_config_full.get("description", "")
+            if garden_desc.strip():
+                instructions += "\n\n## Garden Description (from the user)\n" + garden_desc
+            growth = garden_config_full.get("growth_assessment")
+            if growth:
+                instructions += (
+                    f"\n\n## Last Growth Assessment (your visual observation from previous run)\n"
+                    f"- Stage: {growth.get('stage', 'unknown')}\n"
+                    f"- Height: {growth.get('height_pct', '?')}% of mature size\n"
+                    f"- Notes: {growth.get('notes', '')}\n"
+                    f"- Assessed: {growth.get('assessed_at', 'unknown')}\n"
+                    f"Update this every run with `update_growth_assessment` based on the current photo."
+                )
         except Exception as e:
             logger.warning(f"Failed to load garden config: {e}")
 
@@ -1873,6 +1938,8 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     yield "Saving valve flow rate..."
                 elif tool_name == "save_garden_note":
                     yield f"Remembering: {tool_args.get('key', '')}..."
+                elif tool_name == "update_growth_assessment":
+                    yield f"Saving growth assessment: {tool_args.get('stage', '')} ({tool_args.get('height_pct', 0)}%)..."
 
                 result_text, images = await self._execute_tool_call(tool_name, tool_args, context_id)
                 all_images.extend(images)

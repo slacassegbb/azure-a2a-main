@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { LightSchedule, MoistureReading } from "@/lib/garden/types";
+import { LightSchedule, MoistureReading, GardenConfig } from "@/lib/garden/types";
 import { getCurrentBrightness, getLightPhase, getDayProgress } from "@/lib/garden/calculations";
 
 interface LightTimelineProps {
   schedule: LightSchedule | null | undefined;
   readings?: MoistureReading[];
+  gardenConfig?: GardenConfig | null;
 }
 
 // Sky palette per phase
@@ -23,7 +24,7 @@ const GROUND: Record<string, [string, string]> = {
   sunset:  ["#1a3010", "#0d1a08"],
 };
 
-export default function LightTimeline({ schedule, readings = [] }: LightTimelineProps) {
+export default function LightTimeline({ schedule, readings = [], gardenConfig }: LightTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
@@ -134,7 +135,8 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
   const arcSpanX  = arcEndX - arcStartX;
 
   const sunX = arcStartX + dayProg * arcSpanX;
-  const sunY = GNDLINE - Math.sin(dayProg * Math.PI) * ARC_H;
+  // Sun HEIGHT = actual current brightness (not schedule sine) — shows real grow room state
+  const sunY = GNDLINE - (brightness / 100) * ARC_H;
 
   // Moon arc at night: X follows the actual clock position, Y follows a separate night sine arc
   const nightDuration = (1 - sunsetEndFrac) + sunriseFrac;
@@ -167,6 +169,11 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
   const labelFS    = Math.max(9, W * 0.015);
   const groundBump = H * 0.055;
   const plantScale = H * 0.0012;
+
+  // Growth scale: 0.15 (tiny seedling) → 1.0 (fully mature). Default 0.4 until agent assesses.
+  const growthFrac = gardenConfig?.growth_assessment
+    ? Math.max(0.1, gardenConfig.growth_assessment.height_pct / 100)
+    : 0.4;
 
   // Stars
   const stars = [
@@ -250,26 +257,24 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
           </g>
         ))}
 
-        {/* === ARC PATH === */}
-        {/* Glow under arc */}
-        <path d={arcD} fill="none"
-          stroke={isDay ? "#FFD700" : isNight ? "#4a5568" : "#ff9f43"}
-          strokeWidth={8} strokeLinecap="round" opacity={0.15} />
-        {/* Main arc — thick dashed cartoon style */}
-        <path d={arcD} fill="none"
-          stroke={isDay ? "#FFD700" : isNight ? "#6c757d" : "#ffd166"}
-          strokeWidth={3} strokeLinecap="round"
-          strokeDasharray={isNight ? "8 10" : "none"}
-          opacity={isNight ? 0.4 : 0.7} />
+        {/* === BRIGHTNESS OVERLAY — dims sky only, drawn before plants/ground === */}
+        {isDaytime && brightness < 98 && (
+          <rect width={W} height={GNDLINE} fill="#0b0c2a"
+            opacity={(1 - brightness / 100) * 0.82}
+            style={{ pointerEvents: "none" }} />
+        )}
 
         {/* === SUN === */}
         {isDaytime && (() => {
-          const r = Math.max(18, W * 0.038);
+          const brightFrac = brightness / 100;
+          // Scale size and color with actual brightness
+          const r = Math.max(10, W * 0.038) * (0.5 + 0.5 * brightFrac);
           const glowR = r * 2.8;
           const rayLen = r * 0.7;
           const rayGap = r * 1.25;
+          const sunColor = brightness > 50 ? "#FFD700" : `hsl(48, ${40 + 55 * brightFrac}%, ${50 + 20 * brightFrac}%)`;
           return (
-            <g filter="url(#ct-glow)">
+            <g filter="url(#ct-glow)" opacity={0.4 + 0.6 * brightFrac}>
               {/* Halo */}
               <circle cx={sunX} cy={sunY} r={glowR} fill="url(#ct-sunhalo)">
                 <animate attributeName="r" values={`${glowR};${glowR * 1.15};${glowR}`} dur="3s" repeatCount="indefinite" />
@@ -282,16 +287,16 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
                 const x2 = sunX + Math.cos(rad) * (rayGap + rayLen);
                 const y2 = sunY + Math.sin(rad) * (rayGap + rayLen);
                 return <line key={angle} x1={x1} y1={y1} x2={x2} y2={y2}
-                  stroke="#FFD700" strokeWidth={3.5} strokeLinecap="round"
-                  opacity={brightness / 100 * 0.9}>
+                  stroke={sunColor} strokeWidth={3.5} strokeLinecap="round"
+                  opacity={brightFrac * 0.9}>
                   <animateTransform attributeName="transform" type="rotate"
                     from={`0 ${sunX} ${sunY}`} to={`360 ${sunX} ${sunY}`}
                     dur="20s" repeatCount="indefinite" />
                 </line>;
               })}
               {/* Sun disc */}
-              <circle cx={sunX} cy={sunY} r={r} fill="#FFD700" stroke="#FF8C00" strokeWidth={3} />
-              {/* Face */}
+              <circle cx={sunX} cy={sunY} r={r} fill={sunColor} stroke="#FF8C00" strokeWidth={3} />
+              {/* Face — only when bright enough */}
               {brightness > 30 && <>
                 <circle cx={sunX - r * 0.28} cy={sunY - r * 0.1} r={r * 0.12} fill="#FF8C00" />
                 <circle cx={sunX + r * 0.28} cy={sunY - r * 0.1} r={r * 0.12} fill="#FF8C00" />
@@ -302,15 +307,18 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
           );
         })()}
 
-        {/* === HISTORICAL BRIGHTNESS DOTS === */}
+
+        {/* === HISTORICAL BRIGHTNESS DOTS — trail showing past sun positions === */}
         {readings.filter(r => r.light !== undefined && r.light! > 0).map((r, i) => {
           const d = new Date(r.ts);
+          const now = new Date();
+          if (d.getDate() !== now.getDate() || d.getMonth() !== now.getMonth() || d.getFullYear() !== now.getFullYear()) return null;
           const hf = (d.getHours() + d.getMinutes() / 60) / 24;
           if (hf < sunriseFrac || hf > sunsetEndFrac) return null;
           const t = (hf - sunriseFrac) / dayRange;
           const x = arcStartX + t * arcSpanX;
-          const y = GNDLINE - (r.light! / 100) * Math.sin(t * Math.PI) * ARC_H;
-          return <circle key={i} cx={x} cy={y} r={3} fill="#FFD700" opacity={0.55} />;
+          const y = GNDLINE - (r.light! / 100) * ARC_H;
+          return <circle key={i} cx={x} cy={y} r={2.5} fill="#FFD700" opacity={0.45} />;
         })}
 
         {/* === MOON (travels the arc at night) === */}
@@ -353,7 +361,7 @@ export default function LightTimeline({ schedule, readings = [] }: LightTimeline
         {[0.10, 0.22, 0.37, 0.50, 0.63, 0.77, 0.90].map((fx, i) => {
           const px = fx * W;
           const py = GNDLINE - groundBump * 0.3;
-          const ph = H * (0.08 + (i % 3) * 0.03);
+          const ph = H * (0.08 + (i % 3) * 0.03) * growthFrac;
           const pw = ph * 0.5;
           const leafColor = isDay ? "#4caf50" : isNight ? "#1a3a10" : "#388e3c";
           const stemColor = isDay ? "#2e7d32" : "#1a2e10";

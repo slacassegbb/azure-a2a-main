@@ -6,6 +6,7 @@ export interface MoistureReading {
   light?: number;
   fan?: number;
   weight_g?: number;
+  weight2_g?: number;
 }
 
 export interface GardenEvent {
@@ -20,6 +21,7 @@ export interface MoistureData {
     pct: number;
     temp_c: number | null;
     weight_g: number | null;
+    weight2_g: number | null;
     timestamp: string;
     irrigating: boolean;
   };
@@ -116,9 +118,17 @@ export interface ValveFlowRate {
   last_calibrated: string;
 }
 
+export interface GrowthAssessment {
+  stage: "empty" | "germination" | "seedling" | "vegetative" | "flowering" | "harvest";
+  height_pct: number;
+  notes: string;
+  assessed_at: string;
+}
+
 export interface GardenConfig {
   description?: string;
   pots?: PotConfig[];
   valve_flow_rates?: Record<string, ValveFlowRate>;
   updated_at?: string;
+  growth_assessment?: GrowthAssessment;
 }
