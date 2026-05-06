@@ -102,6 +102,24 @@ unsigned long lastMoistureUploadMs = 0;
 String pendingEvents = "";  // JSON events to include in next moisture upload
 const int MAX_EVENTS = 50;  // keep last 50 events
 
+// ===========================
+// Moisture history — circular buffer in RAM
+// No blob download needed; buffer rebuilt as valid JSON each upload cycle.
+// ===========================
+struct MoistureReading {
+  char ts[25];
+  int  raw;
+  int  pct;
+  float temp_c;
+  int  light;
+  int  fan;
+  float weight_g;
+  float weight2_g;
+};
+static MoistureReading moistureHistory[MAX_MOISTURE_HISTORY];
+static int moistureHead  = 0;  // next write slot
+static int moistureCount = 0;  // valid entries (0 … MAX_MOISTURE_HISTORY)
+
 // Light schedule state
 String lastLightRequestId = "";
 unsigned long lastLightSchedulePollMs = 0;
@@ -740,6 +758,9 @@ void pollValveCommand() {
 
 // ------------------------------------------------------------------
 // Upload moisture data to blob
+// Readings are kept in a fixed circular buffer in RAM — no blob download
+// needed. Each upload writes a complete, valid JSON document from scratch,
+// so a WiFi drop or power cycle can never corrupt the stored array.
 // ------------------------------------------------------------------
 void uploadMoistureData() {
   if (millis() - lastMoistureUploadMs < MOISTURE_UPLOAD_INTERVAL_MS) return;
@@ -751,77 +772,48 @@ void uploadMoistureData() {
   int moisturePct = map(lastMoistureRaw, 40, 110, 0, 100);
   moisturePct = constrain(moisturePct, 0, 100);
 
-  // Build current reading
-  String timestamp = formatRfc1123(now);
   struct tm tmInfo;
   gmtime_r(&now, &tmInfo);
-  char isoBuf[30];
+  char isoBuf[25];
   strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
 
-  String newEntry = "{\"ts\":\"" + String(isoBuf) + "\",\"raw\":" + String(lastMoistureRaw) + ",\"pct\":" + String(moisturePct)
-                  + (lastTempC > -100 ? ",\"temp_c\":" + String(lastTempC, 1) : "")
-                  + ",\"light\":" + String(constrain(currentBrightness, 0, 100))
-                  + ",\"fan\":" + String(fanOn ? fanSpeed : 0)
-                  + ",\"weight_g\":" + String(lastWeightG, 1)
-                  + ",\"weight2_g\":" + String(lastWeight2G, 1) + "}";
+  // Append new reading to circular buffer
+  MoistureReading& slot = moistureHistory[moistureHead];
+  strlcpy(slot.ts, isoBuf, sizeof(slot.ts));
+  slot.raw      = lastMoistureRaw;
+  slot.pct      = moisturePct;
+  slot.temp_c   = lastTempC;
+  slot.light    = constrain(currentBrightness, 0, 100);
+  slot.fan      = fanOn ? fanSpeed : 0;
+  slot.weight_g = lastWeightG;
+  slot.weight2_g = lastWeight2G;
 
-  // Download existing history
-  String existing = downloadBlob(String(MOISTURE_BLOB_NAME));
+  moistureHead = (moistureHead + 1) % MAX_MOISTURE_HISTORY;
+  if (moistureCount < MAX_MOISTURE_HISTORY) moistureCount++;
 
-  // Parse existing readings array or start fresh
-  String readings = "";
-  if (existing.length() > 10 && existing.indexOf("\"readings\"") >= 0) {
-    // Find the readings array specifically (not events or other arrays)
-    int readingsKey = existing.indexOf("\"readings\"");
-    int arrStart = existing.indexOf('[', readingsKey);
-    if (arrStart >= 0) {
-      // Find matching ] by counting brackets
-      int depth = 1;
-      int arrEnd = arrStart + 1;
-      while (arrEnd < (int)existing.length() && depth > 0) {
-        if (existing[arrEnd] == '[') depth++;
-        else if (existing[arrEnd] == ']') depth--;
-        arrEnd++;
-      }
-      arrEnd--; // back to the ]
-      if (depth == 0 && arrEnd > arrStart) {
-        readings = existing.substring(arrStart + 1, arrEnd);
-        // Strip leading/trailing commas — can occur if a previous blob upload
-        // was interrupted mid-write, leaving a partially corrupted array.
-        while (readings.length() > 0 && readings[0] == ',')
-          readings = readings.substring(1);
-        while (readings.length() > 0 && readings[readings.length()-1] == ',')
-          readings = readings.substring(0, readings.length()-1);
-      }
-    }
+  // Serialize buffer oldest-first into the readings array
+  int startIdx = (moistureCount == MAX_MOISTURE_HISTORY) ? moistureHead : 0;
+  String readings;
+  readings.reserve(moistureCount * 130);  // pre-allocate to avoid reallocs
+  for (int i = 0; i < moistureCount; i++) {
+    const MoistureReading& r = moistureHistory[(startIdx + i) % MAX_MOISTURE_HISTORY];
+    if (i > 0) readings += ",";
+    readings += "{\"ts\":\"";
+    readings += r.ts;
+    readings += "\",\"raw\":";   readings += r.raw;
+    readings += ",\"pct\":";     readings += r.pct;
+    if (r.temp_c > -100) { readings += ",\"temp_c\":"; readings += String(r.temp_c, 1); }
+    readings += ",\"light\":";   readings += r.light;
+    readings += ",\"fan\":";     readings += r.fan;
+    readings += ",\"weight_g\":";  readings += String(r.weight_g, 1);
+    readings += ",\"weight2_g\":"; readings += String(r.weight2_g, 1);
+    readings += "}";
   }
 
-  // Append new reading
-  if (readings.length() > 0) {
-    readings = readings + "," + newEntry;
-  } else {
-    readings = newEntry;
-  }
-
-  // Trim to max history (count commas to estimate entries)
-  int entryCount = 1;
-  for (int i = 0; i < (int)readings.length(); i++) {
-    if (readings[i] == '{') entryCount++;
-  }
-  entryCount--; // overcounted by 1
-
-  while (entryCount > MAX_MOISTURE_HISTORY) {
-    int firstComma = readings.indexOf("},");
-    if (firstComma < 0) break;
-    readings = readings.substring(firstComma + 2);
-    entryCount--;
-  }
-
-  // Build final JSON
   String json = "{\"current\":{\"raw\":" + String(lastMoistureRaw)
-              + ",\"pct\":" + String(moisturePct)
-              + ",\"temp_c\":" + String(lastTempC, 1)
-              + ",\"weight_g\":" + String(lastWeightG, 1)
+              + ",\"pct\":"       + String(moisturePct)
+              + ",\"temp_c\":"    + String(lastTempC, 1)
+              + ",\"weight_g\":"  + String(lastWeightG, 1)
               + ",\"weight2_g\":" + String(lastWeight2G, 1)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
