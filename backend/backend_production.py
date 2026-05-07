@@ -1433,6 +1433,13 @@ def main():
                         f"Route ONLY to {_agent} to save this answer and confirm back. Do NOT run a full garden check."
                     )
                     parts = [Part(root=TextPart(text=_injected))]
+                    # Rebuild message with injected ANSWER_MODE text
+                    message = Message(
+                        messageId=message.messageId,
+                        contextId=context_id,
+                        role=Role.user,
+                        parts=parts,
+                    )
             except Exception as _pq_err:
                 log_warning(f"[SMS Incoming] Could not check pending question: {_pq_err}")
 
