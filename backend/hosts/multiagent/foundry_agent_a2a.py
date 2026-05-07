@@ -43,9 +43,24 @@ _current_parallel_call_id: contextvars.ContextVar[Optional[str]] = contextvars.C
 import httpx
 from dotenv import load_dotenv
 
-# OpenTelemetry for distributed tracing and monitoring
-from opentelemetry import trace
-from azure.monitor.opentelemetry import configure_azure_monitor
+# OpenTelemetry for distributed tracing and monitoring — optional, never crash the backend
+try:
+    from opentelemetry import trace
+    from azure.monitor.opentelemetry import configure_azure_monitor
+    _otel_available = True
+except Exception as _otel_err:
+    import logging as _otel_logging
+    _otel_logging.getLogger(__name__).warning(f"OpenTelemetry unavailable, monitoring disabled: {_otel_err}")
+    _otel_available = False
+    class _NoOpTracer:
+        def get_tracer(self, *a, **kw): return self
+        def start_as_current_span(self, *a, **kw):
+            from contextlib import contextmanager
+            @contextmanager
+            def _noop(): yield None
+            return _noop()
+    trace = _NoOpTracer()  # type: ignore
+    def configure_azure_monitor(**kw): pass  # type: ignore
 
 # Azure authentication - supports multiple credential types for flexibility
 from azure.identity import DefaultAzureCredential, ChainedTokenCredential, AzureCliCredential, ManagedIdentityCredential, EnvironmentCredential, ClientSecretCredential
@@ -141,7 +156,7 @@ logger = logging.getLogger(__name__)
 
 # Configure distributed tracing with Azure Application Insights
 application_insights_connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
-if application_insights_connection_string:
+if _otel_available and application_insights_connection_string:
     configure_azure_monitor(connection_string=application_insights_connection_string)
 tracer = trace.get_tracer(__name__)
 
