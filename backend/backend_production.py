@@ -1413,9 +1413,13 @@ def main():
             #     back to that agent instead of treating it as a new request.
             try:
                 from azure.storage.blob import BlobServiceClient as _BSC
-                _iot_url = f"https://{os.getenv('IOT_BLOB_ACCOUNT','')}.blob.core.windows.net"
-                _iot_cred = __import__('azure.identity', fromlist=['DefaultAzureCredential']).DefaultAzureCredential()
-                _blob_svc = _BSC(account_url=_iot_url, credential=_iot_cred)
+                _iot_conn_str = os.getenv("IOT_BLOB_CONNECTION_STRING", "")
+                if _iot_conn_str:
+                    _blob_svc = _BSC.from_connection_string(_iot_conn_str)
+                else:
+                    _iot_url = f"https://{os.getenv('IOT_BLOB_ACCOUNT','')}.blob.core.windows.net"
+                    _iot_cred = __import__('azure.identity', fromlist=['DefaultAzureCredential']).DefaultAzureCredential()
+                    _blob_svc = _BSC(account_url=_iot_url, credential=_iot_cred)
                 _container = os.getenv("IOT_BLOB_CONTAINER", "garden-images")
                 _safe_uid = user_id.replace("/", "_").replace("\\", "_")
                 _cfg_blob = _blob_svc.get_blob_client(container=_container, blob=f"garden-config-{_safe_uid}.json")
