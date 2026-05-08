@@ -131,4 +131,6 @@ export interface GardenConfig {
   valve_flow_rates?: Record<string, ValveFlowRate>;
   updated_at?: string;
   growth_assessment?: GrowthAssessment;
+  plants?: string;
+  [key: string]: unknown;
 }

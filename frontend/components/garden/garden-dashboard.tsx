@@ -17,6 +17,7 @@ import NextEvent from "./next-event";
 import LastAction from "./last-action";
 import EnvironmentChart from "./environment-chart";
 import PotWeightTile from "./pot-weight-tile";
+import PlantInfoTile from "./plant-info-tile";
 // PhotoTimeline is now integrated into CameraFeed
 
 export default function GardenDashboard() {
@@ -244,6 +245,7 @@ export default function GardenDashboard() {
               <NextEvent schedule={schedule} />
               <LastAction log={data?.garden_log || []} />
             </div>
+            <PlantInfoTile config={data?.garden_config || null} />
           </div>
           <AgentLog entries={data?.garden_log || []} />
         </div>
