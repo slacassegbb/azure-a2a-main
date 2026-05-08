@@ -1439,7 +1439,7 @@ def main():
                     parts = [Part(root=TextPart(text=_injected))]
                     # Rebuild message with injected ANSWER_MODE text
                     message = Message(
-                        messageId=message.messageId,
+                        messageId=message.message_id,
                         contextId=context_id,
                         role=Role.user,
                         parts=parts,
