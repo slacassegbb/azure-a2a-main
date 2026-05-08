@@ -52,12 +52,19 @@ except Exception as _otel_err:
     import logging as _otel_logging
     _otel_logging.getLogger(__name__).warning(f"OpenTelemetry unavailable, monitoring disabled: {_otel_err}")
     _otel_available = False
+    class _NoOpSpan:
+        def set_attribute(self, *a, **kw): pass
+        def set_status(self, *a, **kw): pass
+        def record_exception(self, *a, **kw): pass
+        def add_event(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
     class _NoOpTracer:
         def get_tracer(self, *a, **kw): return self
         def start_as_current_span(self, *a, **kw):
             from contextlib import contextmanager
             @contextmanager
-            def _noop(): yield None
+            def _noop(): yield _NoOpSpan()
             return _noop()
     trace = _NoOpTracer()  # type: ignore
     def configure_azure_monitor(**kw): pass  # type: ignore
