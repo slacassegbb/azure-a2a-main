@@ -60,11 +60,9 @@ export default function AgentLog({ entries }: AgentLogProps) {
                     <span className="text-[10px] shrink-0 group-open:rotate-90 transition-transform" style={{ color: "hsl(220, 10%, 30%)" }}>▶</span>
                   </summary>
                   <div className="px-2 pb-2 ml-[76px]">
-                    <div style={{ maxHeight: "240px", overflowY: "scroll", overscrollBehavior: "contain" }}>
-                      <p className="text-[11px] leading-relaxed whitespace-pre-line" style={{ color: "hsl(220, 10%, 55%)" }}>
-                        {cleanSummary}
-                      </p>
-                    </div>
+                    <p className="text-[11px] leading-relaxed whitespace-pre-line" style={{ color: "hsl(220, 10%, 55%)" }}>
+                      {cleanSummary}
+                    </p>
                   </div>
                 </details>
               );
