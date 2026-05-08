@@ -443,7 +443,16 @@ class WorkflowOrchestration:
 
         context_text = "\n\n".join(context_parts)
 
-        system_prompt = """You are evaluating a condition as part of a multi-agent workflow.
+        from zoneinfo import ZoneInfo
+        _now_utc = datetime.now(timezone.utc)
+        _now_et = _now_utc.astimezone(ZoneInfo("America/New_York"))
+        _time_context = (
+            f"Current date/time: {_now_et.strftime('%A, %B %d, %Y %I:%M %p')} Eastern "
+            f"({_now_utc.strftime('%H:%M')} UTC)"
+        )
+
+        system_prompt = f"""You are evaluating a condition as part of a multi-agent workflow.
+{_time_context}
 Based on the context from previous workflow steps, determine whether the condition is TRUE or FALSE.
 Be precise and objective. Only evaluate what is asked — do not infer beyond the available data."""
 
