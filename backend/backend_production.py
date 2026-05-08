@@ -144,7 +144,7 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
         if agent_name.upper() == 'EVALUATE':
             step_id = step.get('id')
             for target_id, condition in outgoing.get(step_id, []):
-                if condition in ('true', 'false'):
+                if condition and condition.lower() in ('true', 'false'):
                     branch_target_ids.add(target_id)
 
     # BFS with parallel detection
@@ -198,7 +198,7 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
         agent_name_bfs = step.get('agentName') or step.get('agent') or ''
         if agent_name_bfs.upper() == 'EVALUATE':
             for target_id, condition in outgoing.get(step_id, []):
-                if condition in ('true', 'false'):
+                if condition and condition.lower() in ('true', 'false'):
                     for merge_id in outgoing_free.get(target_id, []):
                         if merge_id not in visited:
                             queue.append((merge_id, step_number, [], 0))
@@ -228,7 +228,7 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
         agent_name = entry["step"].get('agentName') or entry["step"].get('agent') or ''
         if agent_name.upper() == 'EVALUATE':
             for target_id, condition in outgoing.get(sid, []):
-                if condition in ('true', 'false') and target_id not in step_num_map:
+                if condition and condition.lower() in ('true', 'false') and target_id not in step_num_map:
                     seq_num += 1
                     step_num_map[target_id] = seq_num
 
@@ -248,12 +248,12 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
         # Emit IF-TRUE/IF-FALSE for eval steps
         if agent_name.upper() == 'EVALUATE':
             for target_id, condition in outgoing.get(sid, []):
-                if condition in ('true', 'false') and target_id in step_by_id:
+                if condition and condition.lower() in ('true', 'false') and target_id in step_by_id:
                     target_step = step_by_id[target_id]
                     target_agent = target_step.get('agentName') or target_step.get('agent') or 'Unknown Agent'
                     target_desc = target_step.get('description') or f'Use the {target_agent} agent'
                     branch_num = step_num_map.get(target_id, 0)
-                    branch_label = "IF-TRUE" if condition == "true" else "IF-FALSE"
+                    branch_label = "IF-TRUE" if condition.lower() == "true" else "IF-FALSE"
                     lines.append(f"   {branch_label} → {branch_num}. [{target_agent}] {target_desc}")
 
     return "\n".join(lines)
