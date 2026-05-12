@@ -19,6 +19,8 @@ import EnvironmentChart from "./environment-chart";
 import PotWeightTile from "./pot-weight-tile";
 import PlantInfoTile from "./plant-info-tile";
 import GardenVoiceButton from "./garden-voice-button";
+import VoiceConversationTile from "./voice-conversation-tile";
+import { useGardenVoice } from "@/hooks/use-garden-voice";
 // PhotoTimeline is now integrated into CameraFeed
 
 export default function GardenDashboard() {
@@ -27,6 +29,23 @@ export default function GardenDashboard() {
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveUser, setLiveUser] = useState<string | undefined>();
+  const [liveAgent, setLiveAgent] = useState<string | undefined>();
+
+  const voice = useGardenVoice({
+    onTurnComplete: async (user, agent) => {
+      setLiveUser(user);
+      setLiveAgent(agent);
+      // Persist to blob
+      await fetch("/api/garden/voice-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user, agent }),
+      });
+      // Refresh dashboard data to pick up new voice log entry
+      setTimeout(fetchData, 1000);
+    },
+  });
 
   const fetchData = useCallback(async () => {
     try {
@@ -87,14 +106,26 @@ export default function GardenDashboard() {
               <Sprout className="w-3.5 h-3.5 xl:w-4 xl:h-4" style={{ color: "hsl(152, 75%, 50%)" }} />
             </div>
             <h1 className="text-sm xl:text-base font-semibold tracking-tight hidden md:block">Smart Garden</h1>
-            <GardenConfig />
           </div>
 
           {/* Spacer */}
           <div className="flex-1" />
 
           {/* Voice button */}
-          <GardenVoiceButton />
+          <GardenVoiceButton
+            isConnected={voice.isConnected}
+            isListening={voice.isListening}
+            isSpeaking={voice.isSpeaking}
+            isProcessing={voice.isProcessing}
+            isTalking={voice.isTalking}
+            isVoiceProcessing={voice.isVoiceProcessing}
+            currentAgent={voice.currentAgent}
+            error={voice.error}
+            onStart={voice.startConversation}
+            onTalk={voice.startTalking}
+            onStopTalk={voice.stopTalking}
+            onStop={() => { voice.stopConversation(); setLiveUser(undefined); setLiveAgent(undefined); }}
+          />
 
           {/* Status + refresh — right */}
           <div className="flex items-center gap-2 shrink-0">
@@ -102,6 +133,7 @@ export default function GardenDashboard() {
             <span className="text-[10px]" style={{ color: "hsl(220, 10%, 45%)" }}>
               {lastFetched ? `${secondsAgo}s` : "..."}
             </span>
+            <GardenConfig />
             <button
               onClick={fetchData}
               disabled={refreshing}
@@ -250,6 +282,11 @@ export default function GardenDashboard() {
               <LastAction log={data?.garden_log || []} />
             </div>
             <PlantInfoTile config={data?.garden_config || null} />
+            <VoiceConversationTile
+              entries={data?.voice_log || []}
+              liveUser={liveUser}
+              liveAgent={liveAgent}
+            />
           </div>
           <AgentLog entries={data?.garden_log || []} />
         </div>

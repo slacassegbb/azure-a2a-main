@@ -63,6 +63,12 @@ export interface GardenLogEntry {
   summary: string;
 }
 
+export interface VoiceLogEntry {
+  timestamp: string;
+  user: string;
+  agent: string;
+}
+
 export interface GardenPhoto {
   name: string;
   url: string;
@@ -102,6 +108,7 @@ export interface GardenDashboardData {
   humidifier: HumidifierStatus | null;
   events: GardenEvent[];
   garden_config: GardenConfig | null;
+  voice_log: VoiceLogEntry[];
 }
 
 export interface PotConfig {

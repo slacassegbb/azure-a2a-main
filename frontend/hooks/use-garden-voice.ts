@@ -6,6 +6,10 @@ import { useCallback, useRef, useState, useEffect } from "react";
 // Identical to frontend_mobile/hooks/use-voice-realtime.ts except executeQuery
 // calls /api/garden/query (server-side auth proxy) instead of requiring a JWT.
 
+interface GardenVoiceConfig {
+  onTurnComplete?: (user: string, agent: string) => void;
+}
+
 interface GardenVoiceHook {
   isConnected: boolean;
   isListening: boolean;
@@ -23,7 +27,7 @@ interface GardenVoiceHook {
   stopTalking: (options?: { interruptMode?: boolean }) => void;
 }
 
-export function useGardenVoice(): GardenVoiceHook {
+export function useGardenVoice(config: GardenVoiceConfig = {}): GardenVoiceHook {
   const [isConnected, setIsConnected] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -46,6 +50,7 @@ export function useGardenVoice(): GardenVoiceHook {
   const autoActivateRef = useRef(false);
   const pendingCallRef = useRef<{ call_id: string; item_id: string } | null>(null);
   const isProcessingRef = useRef(false);
+  const lastTranscriptRef = useRef("");
   const isResponseActiveRef = useRef(false);
   const announcedAgentsRef = useRef<Set<string>>(new Set());
 
@@ -152,6 +157,7 @@ export function useGardenVoice(): GardenVoiceHook {
 
         case "conversation.item.input_audio_transcription.completed":
           setTranscript(msg.transcript || "");
+          lastTranscriptRef.current = msg.transcript || "";
           break;
 
         case "response.created":
@@ -170,8 +176,10 @@ export function useGardenVoice(): GardenVoiceHook {
             announcedAgentsRef.current.clear();
             try {
               const args = JSON.parse(msg.arguments || "{}");
-              const queryResult = await executeQuery(args.query || transcript);
+              const userText = args.query || lastTranscriptRef.current || transcript;
+              const queryResult = await executeQuery(userText);
               setResult(queryResult);
+              if (userText && queryResult) config.onTurnComplete?.(userText, queryResult);
               if (dcRef.current?.readyState === "open") {
                 if (isResponseActiveRef.current) {
                   sendEvent({ type: "response.cancel" });
