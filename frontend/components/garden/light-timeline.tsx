@@ -539,6 +539,41 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           </g>
         ))}
 
+        {/* ── Sun arc trail ── */}
+        {(() => {
+          const midX = (arcStartX + arcEndX) / 2;
+          // Control point at 2x ARC_H so the bezier peak lands exactly at GNDLINE - ARC_H
+          const cpY = GNDLINE - 2 * ARC_H;
+          const fullArcPath = `M ${arcStartX},${GNDLINE} Q ${midX},${cpY} ${arcEndX},${GNDLINE}`;
+
+          // Trail progress: grows during day, full after sunset
+          const trailProg = isDaytime ? dayProg : (phase === "night" || phase === "sunset") ? 1 : 0;
+          const subCpX = arcStartX + (midX - arcStartX) * trailProg;
+          const subCpY = GNDLINE - 2 * ARC_H * trailProg;
+          const trailEndX = isDaytime ? sunX : arcEndX;
+          const trailEndY = isDaytime ? sunY : GNDLINE;
+          const trailPath = trailProg > 0.01
+            ? `M ${arcStartX},${GNDLINE} Q ${subCpX},${subCpY} ${trailEndX},${trailEndY}`
+            : null;
+
+          return (
+            <>
+              {/* Full planned arc — faint dashed, always visible */}
+              <path d={fullArcPath} fill="none" stroke="#FFD700" strokeWidth={1.5}
+                strokeDasharray="6 10" opacity={isDaytime ? 0.20 : 0.10} />
+              {/* Glowing trail — grows as sun moves, stays full at night */}
+              {trailPath && (
+                <>
+                  <path d={trailPath} fill="none" stroke="#FF8C00" strokeWidth={12}
+                    strokeLinecap="round" opacity={isDaytime ? 0.12 : 0.06} />
+                  <path d={trailPath} fill="none" stroke="#FFD700" strokeWidth={2.5}
+                    strokeLinecap="round" opacity={isDaytime ? 0.75 : 0.35} />
+                </>
+              )}
+            </>
+          );
+        })()}
+
         {/* ── Sun ── */}
         {isDaytime && (() => {
           const brightFrac = brightness / 100;
@@ -573,18 +608,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             </g>
           );
         })()}
-
-        {/* ── Historical brightness trail ── */}
-        {readings.filter(r => r.light !== undefined && r.light! > 0).map((r, i) => {
-          const d = new Date(r.ts), now = new Date();
-          if (d.getDate() !== now.getDate()) return null;
-          const hf = (d.getHours() + d.getMinutes() / 60) / 24;
-          if (hf < sunriseFrac || hf > sunsetEndFrac) return null;
-          const t  = (hf - sunriseFrac) / dayRange;
-          const x  = arcStartX + t * arcSpanX;
-          const y  = GNDLINE - (r.light! / 100) * ARC_H;
-          return <circle key={i} cx={x} cy={y} r={2.5} fill="#FFD700" opacity={0.42} />;
-        })}
 
         {/* ── Moon ── */}
         {!isDaytime && (() => {
