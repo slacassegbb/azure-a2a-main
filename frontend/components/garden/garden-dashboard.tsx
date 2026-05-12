@@ -18,6 +18,7 @@ import LastAction from "./last-action";
 import EnvironmentChart from "./environment-chart";
 import PotWeightTile from "./pot-weight-tile";
 import PlantInfoTile from "./plant-info-tile";
+import GardenVoiceButton from "./garden-voice-button";
 // PhotoTimeline is now integrated into CameraFeed
 
 export default function GardenDashboard() {
@@ -91,6 +92,9 @@ export default function GardenDashboard() {
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {/* Voice button */}
+          <GardenVoiceButton />
 
           {/* Status + refresh — right */}
           <div className="flex items-center gap-2 shrink-0">
