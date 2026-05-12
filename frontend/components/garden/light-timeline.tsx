@@ -173,6 +173,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   const arcStartX = PAD + (displaySunrise / 24) * arcW;
   const arcEndX   = PAD + (displaySunset  / 24) * arcW;
   const arcSpanX  = arcEndX - arcStartX;
+  const arcMidX   = (arcStartX + arcEndX) / 2;
 
   const sunX = arcStartX + dayProg * arcSpanX;
   const sunY = GNDLINE - (brightness / 100) * ARC_H;
@@ -183,8 +184,9 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         ? (progress - sunsetEndFrac) / nightDuration
         : (progress + 1 - sunsetEndFrac) / nightDuration)
     : 0;
-  const moonX = PAD + progress * arcW;
-  const moonY = GNDLINE - Math.sin(nightProg * Math.PI) * ARC_H;
+  // Moon travels the mirror arc: from arcEndX (sunset) back to arcStartX (sunrise)
+  const moonX = arcEndX + (arcStartX - arcEndX) * nightProg;
+  const moonY = GNDLINE - 4 * ARC_H * nightProg * (1 - nightProg);
 
   const isNight = phase === "night";
   const isDay   = phase === "day";
@@ -539,35 +541,56 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           </g>
         ))}
 
-        {/* ── Sun arc trail ── */}
+        {/* ── Celestial arcs ── */}
         {(() => {
-          const midX = (arcStartX + arcEndX) / 2;
-          // Control point at 2x ARC_H so the bezier peak lands exactly at GNDLINE - ARC_H
+          // Both arcs share the same apex: arcMidX, GNDLINE - 2*ARC_H (so peak = GNDLINE - ARC_H)
           const cpY = GNDLINE - 2 * ARC_H;
-          const fullArcPath = `M ${arcStartX},${GNDLINE} Q ${midX},${cpY} ${arcEndX},${GNDLINE}`;
 
-          // Trail progress: grows during day, full after sunset
-          const trailProg = isDaytime ? dayProg : (phase === "night" || phase === "sunset") ? 1 : 0;
-          const subCpX = arcStartX + (midX - arcStartX) * trailProg;
-          const subCpY = GNDLINE - 2 * ARC_H * trailProg;
-          const trailEndX = isDaytime ? sunX : arcEndX;
-          const trailEndY = isDaytime ? sunY : GNDLINE;
-          const trailPath = trailProg > 0.01
-            ? `M ${arcStartX},${GNDLINE} Q ${subCpX},${subCpY} ${trailEndX},${trailEndY}`
+          // Day arc: sunrise → sunset (golden)
+          const dayArcPath = `M ${arcStartX},${GNDLINE} Q ${arcMidX},${cpY} ${arcEndX},${GNDLINE}`;
+
+          // Night arc: sunset → sunrise (silver), mirror of day arc, shares endpoints
+          const nightArcPath = `M ${arcEndX},${GNDLINE} Q ${arcMidX},${cpY} ${arcStartX},${GNDLINE}`;
+
+          // Day trail: grows from arcStartX to sunX as day progresses; full arc at night
+          const dayTrailProg = isDaytime ? dayProg : 1;
+          const daySubCpX = arcStartX + (arcMidX - arcStartX) * dayTrailProg;
+          const daySubCpY = GNDLINE - 2 * ARC_H * dayTrailProg;
+          const dayTrailEnd = isDaytime ? `${sunX},${sunY}` : `${arcEndX},${GNDLINE}`;
+          const dayTrailPath = `M ${arcStartX},${GNDLINE} Q ${daySubCpX},${daySubCpY} ${dayTrailEnd}`;
+
+          // Night trail: grows from arcEndX to moonX as night progresses
+          const nightSubCpX = arcEndX + (arcMidX - arcEndX) * nightProg;
+          const nightSubCpY = GNDLINE - 2 * ARC_H * nightProg;
+          const nightTrailPath = nightProg > 0.01
+            ? `M ${arcEndX},${GNDLINE} Q ${nightSubCpX},${nightSubCpY} ${moonX},${moonY}`
             : null;
 
           return (
             <>
-              {/* Full planned arc — faint dashed, always visible */}
-              <path d={fullArcPath} fill="none" stroke="#FFD700" strokeWidth={1.5}
-                strokeDasharray="6 10" opacity={isDaytime ? 0.20 : 0.10} />
-              {/* Glowing trail — grows as sun moves, stays full at night */}
-              {trailPath && (
+              {/* Full day arc — faint dashed gold */}
+              <path d={dayArcPath} fill="none" stroke="#FFD700" strokeWidth={1.5}
+                strokeDasharray="6 10" opacity={isDaytime ? 0.22 : 0.12} />
+
+              {/* Day trail — glowing gold */}
+              <path d={dayTrailPath} fill="none" stroke="#FF8C00" strokeWidth={10}
+                strokeLinecap="round" opacity={isDaytime ? 0.13 : 0.07} />
+              <path d={dayTrailPath} fill="none" stroke="#FFD700" strokeWidth={2.5}
+                strokeLinecap="round" opacity={isDaytime ? 0.80 : 0.38} />
+
+              {/* Full night arc — faint dashed silver */}
+              {!isDaytime && (
+                <path d={nightArcPath} fill="none" stroke="#9fa8da" strokeWidth={1.5}
+                  strokeDasharray="6 10" opacity={0.18} />
+              )}
+
+              {/* Night trail — glowing silver */}
+              {nightTrailPath && (
                 <>
-                  <path d={trailPath} fill="none" stroke="#FF8C00" strokeWidth={12}
-                    strokeLinecap="round" opacity={isDaytime ? 0.12 : 0.06} />
-                  <path d={trailPath} fill="none" stroke="#FFD700" strokeWidth={2.5}
-                    strokeLinecap="round" opacity={isDaytime ? 0.75 : 0.35} />
+                  <path d={nightTrailPath} fill="none" stroke="#7986cb" strokeWidth={10}
+                    strokeLinecap="round" opacity={0.12} />
+                  <path d={nightTrailPath} fill="none" stroke="#c5cae9" strokeWidth={2}
+                    strokeLinecap="round" opacity={0.65} />
                 </>
               )}
             </>
