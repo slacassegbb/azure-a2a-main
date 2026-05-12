@@ -10,25 +10,38 @@ interface LightTimelineProps {
   gardenConfig?: GardenConfig | null;
 }
 
-// ── Sky & ground palettes ──────────────────────────────────────────────────
-const SKY_TOP: Record<string, string> = {
-  night: "#020310", sunrise: "#0e0620", day: "#1565c0", sunset: "#140820",
+// ── Sky multi-stop gradients (Rayleigh-inspired) ───────────────────────────
+const SKY_STOPS: Record<string, [string, string][]> = {
+  night:   [["0%","#010208"],["30%","#030a1c"],["60%","#051230"],["100%","#080f3a"]],
+  sunrise: [["0%","#07081e"],["22%","#1c1240"],["46%","#681808"],["66%","#cc4210"],["82%","#e87828"],["100%","#f8a848"]],
+  day:     [["0%","#091830"],["20%","#1255a8"],["50%","#2888d8"],["78%","#58aae0"],["100%","#90ccf4"]],
+  sunset:  [["0%","#060418"],["18%","#2a0840"],["40%","#801030"],["62%","#c83c20"],["80%","#e46830"],["100%","#f49050"]],
 };
-const SKY_BOT: Record<string, string> = {
-  night: "#0b0d38", sunrise: "#c04810", day: "#64b5f6", sunset: "#a03010",
+const SKY_DARK: Record<string, string> = {
+  night: "#010208", sunrise: "#07081e", day: "#091830", sunset: "#060418",
 };
+
+// ── Ground palettes ────────────────────────────────────────────────────────
 const GROUND_TOP: Record<string, string> = {
-  night: "#0d1f0d", sunrise: "#1a3810", day: "#2d6a1f", sunset: "#162e0e",
+  night: "#0e2410", sunrise: "#1e4012", day: "#4a9c28", sunset: "#183210",
 };
 const GROUND_BOT: Record<string, string> = {
-  night: "#0a160a", sunrise: "#0c1e08", day: "#1a4012", sunset: "#0c1808",
+  night: "#080e08", sunrise: "#0a1808", day: "#1e5014", sunset: "#0c1808",
+};
+
+// ── Horizon haze colour per phase ──────────────────────────────────────────
+const HAZE_COL: Record<string, string> = {
+  night: "#0a1858", sunrise: "#ff9060", day: "#c8e8ff", sunset: "#ff7048",
+};
+const HAZE_OPC: Record<string, number> = {
+  night: 0.30, sunrise: 0.60, day: 0.28, sunset: 0.65,
 };
 
 // ── Mountain colours per phase ─────────────────────────────────────────────
-const MTN_FAR: Record<string, string>  = { night: "#14102a", sunrise: "#1e1438", day: "#5e748e", sunset: "#1a1030" };
-const MTN_MID: Record<string, string>  = { night: "#0c140c", sunrise: "#111e11", day: "#3a5e28", sunset: "#0e160e" };
-const MTN_NEAR: Record<string, string> = { night: "#080e08", sunrise: "#0d160d", day: "#2a4e18", sunset: "#0a120a" };
-const PINE_COL: Record<string, string> = { night: "#040804", sunrise: "#080e08", day: "#1c3e0e", sunset: "#060a06" };
+const MTN_FAR: Record<string, string>  = { night: "#10102a", sunrise: "#1e1438", day: "#6888a4", sunset: "#1c1038" };
+const MTN_MID: Record<string, string>  = { night: "#0b130b", sunrise: "#111e11", day: "#3e6430", sunset: "#0e160e" };
+const MTN_NEAR: Record<string, string> = { night: "#080d08", sunrise: "#0c160c", day: "#2e5420", sunset: "#0a120a" };
+const PINE_COL: Record<string, string> = { night: "#030703", sunrise: "#070d07", day: "#1e4210", sunset: "#050905" };
 
 // ── Mountain peak tables ───────────────────────────────────────────────────
 // [x_fraction_of_W,  y_fraction_of_maxH]
@@ -430,7 +443,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   };
 
   return (
-    <div ref={containerRef} className="rounded-2xl overflow-hidden w-full h-full" style={{ background: SKY_TOP[phase] }}>
+    <div ref={containerRef} className="rounded-2xl overflow-hidden w-full h-full" style={{ background: SKY_DARK[phase] }}>
       <svg
         ref={svgRef}
         width={W} height={H}
@@ -439,28 +452,48 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         style={{ display: "block", touchAction: "none" }}
       >
         <defs>
+          {/* Multi-stop sky gradient */}
           <linearGradient id="ct-sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor={SKY_TOP[phase]} />
-            <stop offset="100%" stopColor={SKY_BOT[phase]} />
+            {SKY_STOPS[phase].map(([off, col]) => (
+              <stop key={off} offset={off} stopColor={col} />
+            ))}
           </linearGradient>
           <linearGradient id="ct-ground" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%"   stopColor={GROUND_TOP[phase]} />
             <stop offset="100%" stopColor={GROUND_BOT[phase]} />
           </linearGradient>
+          {/* Horizon haze: transparent → haze colour at ground */}
+          <linearGradient id="ct-haze" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor={HAZE_COL[phase]} stopOpacity={0} />
+            <stop offset="65%"  stopColor={HAZE_COL[phase]} stopOpacity={0} />
+            <stop offset="100%" stopColor={HAZE_COL[phase]} stopOpacity={HAZE_OPC[phase]} />
+          </linearGradient>
+          {/* Milky Way radial smear */}
+          <radialGradient id="ct-milky" cx="55%" cy="38%" r="55%">
+            <stop offset="0%"   stopColor="#7080b8" stopOpacity={0.10} />
+            <stop offset="60%"  stopColor="#4858a0" stopOpacity={0.04} />
+            <stop offset="100%" stopColor="#4858a0" stopOpacity={0} />
+          </radialGradient>
           <radialGradient id="ct-sunhalo" cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stopColor="#FFD700" stopOpacity={0.55} />
-            <stop offset="60%"  stopColor="#FFB800" stopOpacity={0.18} />
+            <stop offset="0%"   stopColor="#FFE060" stopOpacity={0.65} />
+            <stop offset="55%"  stopColor="#FFB800" stopOpacity={0.20} />
             <stop offset="100%" stopColor="#FF8C00" stopOpacity={0} />
           </radialGradient>
           <radialGradient id="ct-moonhalo" cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stopColor="#e8eaf6" stopOpacity={0.4} />
+            <stop offset="0%"   stopColor="#e8eaf6" stopOpacity={0.45} />
+            <stop offset="70%"  stopColor="#9fa8da" stopOpacity={0.08} />
             <stop offset="100%" stopColor="#9fa8da" stopOpacity={0} />
           </radialGradient>
-          {/* Horizon atmospheric glow for sunrise / sunset */}
+          {/* Horizon burst for sunrise / sunset */}
           <radialGradient id="ct-hglow" cx="50%" cy="100%" r="70%" fx="50%" fy="100%">
-            <stop offset="0%"   stopColor={phase === "sunrise" ? "#ff8c30" : "#e05010"} stopOpacity={0.70} />
+            <stop offset="0%"   stopColor={phase === "sunrise" ? "#ff9040" : "#e85828"} stopOpacity={0.80} />
+            <stop offset="50%"  stopColor={phase === "sunrise" ? "#ff6010" : "#c03010"} stopOpacity={0.30} />
             <stop offset="100%" stopColor="#000" stopOpacity={0} />
           </radialGradient>
+          {/* Soft cloud blur */}
+          <filter id="ct-cloudblur" x="-30%" y="-60%" width="160%" height="220%">
+            <feGaussianBlur stdDeviation="6 5" />
+          </filter>
           <filter id="ct-glow">
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
@@ -473,22 +506,51 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         {/* ── Sky ── */}
         <rect width={W} height={H} fill="url(#ct-sky)" />
 
-        {/* ── Stars (night) ── */}
-        {isNight && starList.map((s, i) => (
-          <path key={i}
-            d={`M ${s.x},${s.y - 4} L ${s.x + 1.2},${s.y - 1.2} L ${s.x + 4},${s.y} L ${s.x + 1.2},${s.y + 1.2} L ${s.x},${s.y + 4} L ${s.x - 1.2},${s.y + 1.2} L ${s.x - 4},${s.y} L ${s.x - 1.2},${s.y - 1.2} Z`}
-            fill="white" opacity={0.65 + (i % 3) * 0.12}>
-            <animate attributeName="opacity"
-              values={`${0.35 + (i % 4) * 0.12};${0.90};${0.35 + (i % 4) * 0.12}`}
-              dur={`${1.8 + i * 0.28}s`} repeatCount="indefinite" />
-          </path>
-        ))}
+        {/* ── Milky Way smear (night only) ── */}
+        {isNight && (
+          <ellipse cx={W * 0.55} cy={GNDLINE * 0.42} rx={W * 0.60} ry={GNDLINE * 0.38}
+            fill="url(#ct-milky)" style={{ pointerEvents: "none" }} />
+        )}
+
+        {/* ── Stars (night / transition) ── */}
+        {(isNight || phase === "sunrise") && starList.map((s, i) => {
+          const dim = phase === "sunrise" ? 0.3 : 1;
+          const r   = i % 5 === 0 ? 2.0 : i % 3 === 0 ? 1.4 : 1.0;
+          return (
+            <circle key={i} cx={s.x} cy={s.y} r={r}
+              fill={i % 7 === 0 ? "#ffe8c8" : i % 5 === 0 ? "#c8d8ff" : "white"}
+              opacity={(0.50 + (i % 4) * 0.12) * dim}>
+              <animate attributeName="opacity"
+                values={`${(0.28 + (i % 4) * 0.10) * dim};${(0.85 + (i % 3) * 0.08) * dim};${(0.28 + (i % 4) * 0.10) * dim}`}
+                dur={`${2.0 + i * 0.22}s`} repeatCount="indefinite" />
+            </circle>
+          );
+        })}
+
+        {/* ── Crepuscular rays (sunrise / sunset) ── */}
+        {(phase === "sunrise" || phase === "sunset") && (
+          <g opacity={0.10} style={{ pointerEvents: "none" }}>
+            {[0.22, 0.35, 0.50, 0.65, 0.78].map((fx, i) => {
+              const x = fx * W;
+              const spread = W * 0.035;
+              const col = phase === "sunrise" ? "#ffa860" : "#ff8040";
+              return (
+                <path key={i}
+                  d={`M ${W * 0.50},${GNDLINE * 1.1} L ${x - spread},0 L ${x + spread},0 Z`}
+                  fill={col} opacity={0.6 - i * 0.08} />
+              );
+            })}
+          </g>
+        )}
 
         {/* ── Horizon atmospheric glow (sunrise / sunset) ── */}
         {(phase === "sunrise" || phase === "sunset") && (
-          <ellipse cx={W / 2} cy={GNDLINE} rx={W * 0.75} ry={GNDLINE * 0.55}
-            fill="url(#ct-hglow)" opacity={0.85} />
+          <ellipse cx={W / 2} cy={GNDLINE} rx={W * 0.78} ry={GNDLINE * 0.58}
+            fill="url(#ct-hglow)" opacity={0.90} />
         )}
+
+        {/* ── Horizon haze (always — colour varies by phase) ── */}
+        <rect width={W} height={GNDLINE} fill="url(#ct-haze)" style={{ pointerEvents: "none" }} />
 
         {/* ── Far mountain range ── */}
         <path d={farPath} fill={MTN_FAR[phase]} opacity={0.92} />
@@ -526,20 +588,33 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             style={{ pointerEvents: "none" }} />
         )}
 
-        {/* ── Clouds (day only) ── */}
-        {isDay && [
-          { x: W * 0.14, y: H * 0.10, s: 1.0 },
-          { x: W * 0.60, y: H * 0.07, s: 0.75 },
-          { x: W * 0.83, y: H * 0.16, s: 0.60 },
-        ].map((c, i) => (
-          <g key={i} transform={`translate(${c.x},${c.y}) scale(${c.s})`} opacity={0.90}>
-            <ellipse cx={0}   cy={0}  rx={36} ry={22} fill="white" />
-            <ellipse cx={-22} cy={4}  rx={24} ry={16} fill="white" />
-            <ellipse cx={24}  cy={4}  rx={26} ry={17} fill="white" />
-            <ellipse cx={0}   cy={8}  rx={38} ry={16} fill="white" />
-            <ellipse cx={0}   cy={0}  rx={36} ry={22} fill="none" stroke="#ddd" strokeWidth={1.5} />
-          </g>
-        ))}
+        {/* ── Clouds (day / sunrise) ── */}
+        {(isDay || phase === "sunrise") && [
+          { x: W * 0.14, y: H * 0.09, s: 1.00, op: 0.92 },
+          { x: W * 0.58, y: H * 0.06, s: 0.78, op: 0.85 },
+          { x: W * 0.82, y: H * 0.15, s: 0.62, op: 0.80 },
+        ].map((c, i) => {
+          const sc = c.s * W * 0.055;
+          const tint = phase === "sunrise" ? "#ffe0c0" : "white";
+          const shadow = phase === "sunrise" ? "#d09060" : "#b8ccd8";
+          return (
+            <g key={i} opacity={c.op}>
+              {/* Soft shadow beneath */}
+              <g transform={`translate(${c.x + sc * 0.15},${c.y + sc * 0.45})`} filter="url(#ct-cloudblur)">
+                <ellipse cx={0} cy={0} rx={sc * 2.0} ry={sc * 0.55} fill={shadow} opacity={0.35} />
+              </g>
+              {/* Cloud body — blurred blob cluster */}
+              <g transform={`translate(${c.x},${c.y})`} filter="url(#ct-cloudblur)">
+                <ellipse cx={0}         cy={0}         rx={sc * 2.0} ry={sc * 1.1} fill={tint} />
+                <ellipse cx={sc * -1.2} cy={sc * 0.4}  rx={sc * 1.3} ry={sc * 0.9} fill={tint} />
+                <ellipse cx={sc * 1.3}  cy={sc * 0.3}  rx={sc * 1.5} ry={sc * 1.0} fill={tint} />
+                <ellipse cx={sc * -0.5} cy={sc * -0.5} rx={sc * 1.1} ry={sc * 0.9} fill={tint} />
+                <ellipse cx={sc * 0.7}  cy={sc * -0.4} rx={sc * 1.2} ry={sc * 0.9} fill={tint} />
+                <ellipse cx={0}         cy={sc * 0.7}  rx={sc * 2.2} ry={sc * 0.7} fill={tint} />
+              </g>
+            </g>
+          );
+        })}
 
         {/* ── Celestial arcs ── */}
         {(() => {
@@ -649,7 +724,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             <g>
               <circle cx={moonX} cy={moonY} r={mr * 2.8} fill="url(#ct-moonhalo)" />
               <circle cx={moonX} cy={moonY} r={mr} fill="#f5f0e8" stroke="#c8c0b0" strokeWidth={2.5} />
-              <circle cx={moonX + mr * 0.38} cy={moonY - mr * 0.22} r={mr * 0.82} fill={SKY_BOT[phase]} />
+              <circle cx={moonX + mr * 0.38} cy={moonY - mr * 0.22} r={mr * 0.82} fill={SKY_DARK[phase]} />
               <circle cx={moonX - mr * 0.30} cy={moonY + mr * 0.20} r={mr * 0.14} fill="#ddd8cc" opacity={0.70} />
               <circle cx={moonX - mr * 0.50} cy={moonY - mr * 0.10} r={mr * 0.09} fill="#ddd8cc" opacity={0.60} />
             </g>
