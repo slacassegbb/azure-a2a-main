@@ -568,29 +568,39 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
 
           return (
             <>
-              {/* Full day arc — faint dashed gold */}
+              {/* Full day arc — animated flowing dashes */}
               <path d={dayArcPath} fill="none" stroke="#FFD700" strokeWidth={1.5}
-                strokeDasharray="6 10" opacity={isDaytime ? 0.22 : 0.12} />
+                strokeDasharray="6 10" opacity={isDaytime ? 0.22 : 0.12}>
+                <animate attributeName="stroke-dashoffset" from="16" to="0" dur="1.2s" repeatCount="indefinite" />
+              </path>
 
-              {/* Day trail — glowing gold */}
-              <path d={dayTrailPath} fill="none" stroke="#FF8C00" strokeWidth={10}
-                strokeLinecap="round" opacity={isDaytime ? 0.13 : 0.07} />
+              {/* Day trail — glowing gold with pulse */}
+              <path d={dayTrailPath} fill="none" stroke="#FF8C00" strokeWidth={12}
+                strokeLinecap="round" opacity={isDaytime ? 0.14 : 0.07} />
               <path d={dayTrailPath} fill="none" stroke="#FFD700" strokeWidth={2.5}
-                strokeLinecap="round" opacity={isDaytime ? 0.80 : 0.38} />
+                strokeLinecap="round">
+                <animate attributeName="opacity"
+                  values={isDaytime ? "0.65;0.92;0.65" : "0.28;0.45;0.28"}
+                  dur="2.5s" repeatCount="indefinite" />
+              </path>
 
-              {/* Full night arc — faint dashed silver */}
+              {/* Full night arc — animated flowing dashes silver */}
               {!isDaytime && (
                 <path d={nightArcPath} fill="none" stroke="#9fa8da" strokeWidth={1.5}
-                  strokeDasharray="6 10" opacity={0.18} />
+                  strokeDasharray="6 10" opacity={0.20}>
+                  <animate attributeName="stroke-dashoffset" from="0" to="16" dur="1.8s" repeatCount="indefinite" />
+                </path>
               )}
 
-              {/* Night trail — glowing silver */}
+              {/* Night trail — glowing silver with pulse */}
               {nightTrailPath && (
                 <>
                   <path d={nightTrailPath} fill="none" stroke="#7986cb" strokeWidth={10}
-                    strokeLinecap="round" opacity={0.12} />
-                  <path d={nightTrailPath} fill="none" stroke="#c5cae9" strokeWidth={2}
-                    strokeLinecap="round" opacity={0.65} />
+                    strokeLinecap="round" opacity={0.13} />
+                  <path d={nightTrailPath} fill="none" stroke="#c5cae9" strokeWidth={2.5}
+                    strokeLinecap="round">
+                    <animate attributeName="opacity" values="0.50;0.80;0.50" dur="3s" repeatCount="indefinite" />
+                  </path>
                 </>
               )}
             </>
