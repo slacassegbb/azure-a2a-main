@@ -236,8 +236,8 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
 
   // Mountain geometry
   const FAR_MAX  = GNDLINE * 0.46;
-  const MID_MAX  = GNDLINE * 0.32;
-  const NEAR_MAX = GNDLINE * 0.22;
+  const MID_MAX  = GNDLINE * 0.46;
+  const NEAR_MAX = GNDLINE * 0.34;
   const farPath  = buildMtnPath(FAR_PEAKS,  W, GNDLINE, FAR_MAX);
   const midPath  = buildMtnPath(MID_PEAKS,  W, GNDLINE, MID_MAX);
   const nearPath = buildMtnPath(NEAR_PEAKS, W, GNDLINE, NEAR_MAX);
@@ -275,6 +275,11 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
 
   // Water % per pot (derived from calibrated weight range)
   const latestReading = readings && readings.length > 0 ? readings[readings.length - 1] : null;
+
+  // Wind animation driven by fan speed
+  const fanSpeed = latestReading?.fan ?? 0;
+  const windSwayDeg = fanSpeed * 0.07; // max ~7° at 100%
+  const windDur = fanSpeed > 3 ? Math.max(0.6, 2.8 - fanSpeed * 0.022) : 0;
   const potWaterPcts: (number | null)[] = POT_XS.map((_, i) => {
     const pot = gardenConfig?.pots?.[i];
     if (!pot || pot.dry_weight_g == null || pot.wet_weight_g == null || pot.wet_weight_g <= pot.dry_weight_g) return null;
@@ -290,10 +295,19 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
     [0.48, 0.30], [0.70, 0.32], [0.35, 0.25],
   ].map(([fx, fy]) => ({ x: fx * W, y: fy * GNDLINE }));
 
-  const renderPine = (cx: number, baseY: number, h: number, col: string, key: number) => {
+  const renderPine = (cx: number, baseY: number, h: number, col: string, key: number, phaseIdx: number = 0) => {
     const w = h * 0.52;
+    const dur = windDur > 0 ? (windDur + phaseIdx * 0.07).toFixed(2) : "0";
+    const begin = windDur > 0 ? `${(phaseIdx * 0.17).toFixed(2)}s` : "0s";
+    const sway = windSwayDeg;
     return (
       <g key={key}>
+        {windDur > 0 && (
+          <animateTransform attributeName="transform" type="rotate"
+            values={`${-sway} ${cx} ${baseY}; ${sway * 1.3} ${cx} ${baseY}; ${-sway} ${cx} ${baseY}`}
+            dur={`${dur}s`} begin={begin} repeatCount="indefinite"
+            calcMode="spline" keySplines="0.45 0 0.55 1; 0.45 0 0.55 1" />
+        )}
         <rect x={cx - w * 0.09} y={baseY - h * 0.10} width={w * 0.18} height={h * 0.12} fill="#2a1408" />
         <polygon points={`${cx},${baseY - h} ${cx - w * 0.48},${baseY - h * 0.60} ${cx + w * 0.48},${baseY - h * 0.60}`} fill={col} />
         <polygon points={`${cx},${baseY - h * 0.66} ${cx - w * 0.74},${baseY - h * 0.30} ${cx + w * 0.74},${baseY - h * 0.30}`} fill={col} />
@@ -630,8 +644,8 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         {PINE_XS.map((fx, i) => {
           const px  = fx * W;
           const baseY = getMtnY(NEAR_PEAKS, fx, GNDLINE, NEAR_MAX);
-          const ph  = Math.max(12, NEAR_MAX * 0.30 * (0.7 + (i % 3) * 0.22));
-          return renderPine(px, baseY, ph, PINE_COL[phase], i);
+          const ph  = Math.max(16, NEAR_MAX * 0.48 * (0.7 + (i % 3) * 0.22));
+          return renderPine(px, baseY, ph, PINE_COL[phase], i, i);
         })}
 
         {/* ── Brightness overlay ── */}
