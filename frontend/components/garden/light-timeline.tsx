@@ -22,11 +22,25 @@ const SKY_DARK: Record<string, string> = {
 };
 
 // ── Ground palettes ────────────────────────────────────────────────────────
+// ── Ground multi-stop gradient ─────────────────────────────────────────────
+const GROUND_STOPS: Record<string, [string, string][]> = {
+  night:   [["0%","#122a14"],["40%","#0c1e0e"],["100%","#060c06"]],
+  sunrise: [["0%","#2a5018"],["40%","#162e0c"],["100%","#0a1608"]],
+  day:     [["0%","#58b830"],["25%","#3e8c20"],["60%","#246014"],["100%","#14400a"]],
+  sunset:  [["0%","#1e4010"],["40%","#102208"],["100%","#080e04"]],
+};
+const GRASS_COL: Record<string, string> = {
+  night: "#1a4018", sunrise: "#3a7020", day: "#6acf32", sunset: "#285018",
+};
+const GRASS_MID: Record<string, string> = {
+  night: "#0e2410", sunrise: "#224010", day: "#4aa020", sunset: "#183010",
+};
+// keep these for the moon crescent cutout
 const GROUND_TOP: Record<string, string> = {
-  night: "#0e2410", sunrise: "#1e4012", day: "#4a9c28", sunset: "#183210",
+  night: "#122a14", sunrise: "#2a5018", day: "#58b830", sunset: "#1e4010",
 };
 const GROUND_BOT: Record<string, string> = {
-  night: "#080e08", sunrise: "#0a1808", day: "#1e5014", sunset: "#0c1808",
+  night: "#060c06", sunrise: "#0a1608", day: "#14400a", sunset: "#080e04",
 };
 
 // ── Horizon haze colour per phase ──────────────────────────────────────────
@@ -459,8 +473,9 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             ))}
           </linearGradient>
           <linearGradient id="ct-ground" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor={GROUND_TOP[phase]} />
-            <stop offset="100%" stopColor={GROUND_BOT[phase]} />
+            {GROUND_STOPS[phase].map(([off, col]) => (
+              <stop key={off} offset={off} stopColor={col} />
+            ))}
           </linearGradient>
           {/* Horizon haze: transparent → haze colour at ground */}
           <linearGradient id="ct-haze" x1="0" y1="0" x2="0" y2="1">
@@ -731,28 +746,42 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           );
         })()}
 
-        {/* ── Main ground ── */}
-        <path
-          d={`M 0,${GNDLINE}
-              C ${W*0.15},${GNDLINE - groundBump * 0.9} ${W*0.28},${GNDLINE - groundBump * 0.4} ${W*0.42},${GNDLINE - groundBump * 0.7}
-              C ${W*0.56},${GNDLINE - groundBump * 1.0} ${W*0.68},${GNDLINE - groundBump * 0.3} ${W*0.82},${GNDLINE - groundBump * 0.6}
-              C ${W*0.92},${GNDLINE - groundBump * 0.8} ${W*0.97},${GNDLINE - groundBump * 0.2} ${W},${GNDLINE - groundBump * 0.3}
-              L ${W},${H} L 0,${H} Z`}
-          fill="url(#ct-ground)"
-        />
-        {/* Soft grass edge — slightly lighter strip along the top of the ground, no hard line */}
-        <path
-          d={`M 0,${GNDLINE}
-              C ${W*0.15},${GNDLINE - groundBump * 0.9} ${W*0.28},${GNDLINE - groundBump * 0.4} ${W*0.42},${GNDLINE - groundBump * 0.7}
-              C ${W*0.56},${GNDLINE - groundBump * 1.0} ${W*0.68},${GNDLINE - groundBump * 0.3} ${W*0.82},${GNDLINE - groundBump * 0.6}
-              C ${W*0.92},${GNDLINE - groundBump * 0.8} ${W*0.97},${GNDLINE - groundBump * 0.2} ${W},${GNDLINE - groundBump * 0.3}`}
-          fill="none"
-          stroke={isDay ? "#5abf28" : isNight ? "#1e4a14" : "#3a8a18"}
-          strokeWidth={groundBump * 0.55}
-          strokeLinecap="round"
-          opacity={0.55}
-          style={{ pointerEvents: "none" }}
-        />
+        {(() => {
+          const edge = `M 0,${GNDLINE}
+            C ${W*0.15},${GNDLINE-groundBump*0.9} ${W*0.28},${GNDLINE-groundBump*0.4} ${W*0.42},${GNDLINE-groundBump*0.7}
+            C ${W*0.56},${GNDLINE-groundBump*1.0} ${W*0.68},${GNDLINE-groundBump*0.3} ${W*0.82},${GNDLINE-groundBump*0.6}
+            C ${W*0.92},${GNDLINE-groundBump*0.8} ${W*0.97},${GNDLINE-groundBump*0.2} ${W},${GNDLINE-groundBump*0.3}`;
+
+          // Second undulating layer slightly below — adds depth
+          const edge2 = `M 0,${GNDLINE+groundBump*0.4}
+            C ${W*0.20},${GNDLINE+groundBump*0.05} ${W*0.35},${GNDLINE+groundBump*0.55} ${W*0.50},${GNDLINE+groundBump*0.20}
+            C ${W*0.65},${GNDLINE-groundBump*0.10} ${W*0.78},${GNDLINE+groundBump*0.45} ${W*0.90},${GNDLINE+groundBump*0.15}
+            C ${W*0.96},${GNDLINE+groundBump*0.35} ${W},${GNDLINE+groundBump*0.25} ${W},${GNDLINE+groundBump*0.30}`;
+
+          return (
+            <>
+              {/* ── Main ground fill ── */}
+              <path d={`${edge} L ${W},${H} L 0,${H} Z`} fill="url(#ct-ground)" />
+
+              {/* Slightly darker mid-ground layer for terrain depth */}
+              <path d={`${edge2} L ${W},${H} L 0,${H} Z`}
+                fill={GRASS_MID[phase]} opacity={0.55} style={{ pointerEvents: "none" }} />
+
+              {/* Soft grass highlight along the top contour — no hard line */}
+              <path d={edge} fill="none"
+                stroke={GRASS_COL[phase]} strokeWidth={groundBump * 0.70}
+                strokeLinecap="round" opacity={0.60}
+                style={{ pointerEvents: "none" }} />
+
+              {/* Subtle lighter rim right at the top — simulates dew / top-lit grass */}
+              <path d={edge} fill="none"
+                stroke={isDay ? "#90e040" : isNight ? "#2a5a20" : "#50a028"}
+                strokeWidth={groundBump * 0.20}
+                strokeLinecap="round" opacity={0.45}
+                style={{ pointerEvents: "none" }} />
+            </>
+          );
+        })()}
 
         {/* ── Garden pots & plants ── */}
         {POT_XS.map((cx, i) => (
