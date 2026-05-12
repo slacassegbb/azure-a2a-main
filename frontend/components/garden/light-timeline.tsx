@@ -364,7 +364,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
       case "germination": {
         const sh = Math.max(8, plantH * 0.7);
         const domeW = potW * 0.55; // match pot rim width
-        const domeH = plantMaxH * 0.75;
+        const domeH = domeW * 1.1; // keep proportional — shorter so it looks like a cloche not a cone
         return (
           <g key={idx}>
             {/* Tiny curved sprout */}
@@ -375,11 +375,11 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
               fill={leafCol} transform={`rotate(-25,${cx - 6},${baseY - sh * 0.55})`} />
             <ellipse cx={cx + 6} cy={baseY - sh * 0.55} rx={7} ry={3.5}
               fill={leafCol} transform={`rotate(25,${cx + 6},${baseY - sh * 0.55})`} />
-            {/* Plastic dome (bell cloche) */}
-            <path d={`M ${cx - domeW},${baseY + 2} Q ${cx - domeW * 1.05},${baseY - domeH * 0.6} ${cx},${baseY - domeH} Q ${cx + domeW * 1.05},${baseY - domeH * 0.6} ${cx + domeW},${baseY + 2}`}
+            {/* Plastic dome (bell cloche) — wide rounded shape */}
+            <path d={`M ${cx - domeW},${baseY + 2} C ${cx - domeW * 1.15},${baseY - domeH * 0.3} ${cx - domeW * 0.6},${baseY - domeH} ${cx},${baseY - domeH} C ${cx + domeW * 0.6},${baseY - domeH} ${cx + domeW * 1.15},${baseY - domeH * 0.3} ${cx + domeW},${baseY + 2}`}
               fill="rgba(200,230,255,0.07)" stroke="rgba(220,240,255,0.30)" strokeWidth={1.5} />
             {/* Dome highlight */}
-            <path d={`M ${cx - domeW * 0.7},${baseY - domeH * 0.2} Q ${cx - domeW * 0.65},${baseY - domeH * 0.7} ${cx - domeW * 0.2},${baseY - domeH * 0.92}`}
+            <path d={`M ${cx - domeW * 0.65},${baseY - domeH * 0.15} C ${cx - domeW * 0.7},${baseY - domeH * 0.55} ${cx - domeW * 0.35},${baseY - domeH * 0.9} ${cx - domeW * 0.1},${baseY - domeH * 0.97}`}
               fill="none" stroke="rgba(255,255,255,0.38)" strokeWidth={1} />
           </g>
         );
@@ -761,16 +761,17 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         ].map(({ x, label, type, col }) => {
           const active = dragging === type;
           const cr = 5;
-          const labelY = H - 6;
+          const circleY = GNDLINE + 18;
+          const labelY = circleY + 13;
           return (
             <g key={type} onPointerDown={handlePointerDown(type)} style={{ cursor: "ew-resize" }}>
               {/* Wide transparent hit area */}
-              <rect x={x - 20} y={GNDLINE - 4} width={40} height={H - GNDLINE + 4} fill="transparent" />
-              {/* Thin tick from ground down to circle */}
-              <line x1={x} y1={GNDLINE} x2={x} y2={labelY - 14}
+              <rect x={x - 20} y={GNDLINE - 4} width={40} height={labelY - GNDLINE + 10} fill="transparent" />
+              {/* Short tick from ground to circle */}
+              <line x1={x} y1={GNDLINE} x2={x} y2={circleY - cr}
                 stroke={col} strokeWidth={1} opacity={active ? 0.9 : 0.35} />
               {/* Small draggable circle */}
-              <circle cx={x} cy={labelY - 14} r={active ? cr + 2 : cr}
+              <circle cx={x} cy={circleY} r={active ? cr + 2 : cr}
                 fill={active ? col : "rgba(0,0,0,0.55)"}
                 stroke={col} strokeWidth={1.5}
                 filter={active ? "url(#ct-glow)" : undefined} />
