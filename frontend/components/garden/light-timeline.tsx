@@ -712,13 +712,22 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             C ${W*0.92},${GNDLINE-groundBump*0.8} ${W*0.97},${GNDLINE-groundBump*0.2} ${W},${GNDLINE-groundBump*0.3}`;
 
           const groundPath = `${edge} L ${W},${H} L 0,${H} Z`;
-          const tintOpacity = isDay ? 0.10 : isNight ? 0.72 : 0.50;
+          // Black darkening: night=strong, sunrise/sunset=medium, day=none
+          const darkOpacity = isDay ? 0.0 : isNight ? 0.78 : 0.42;
+          // Warm color tint for sunrise/sunset
+          const warmCol = phase === "sunrise" ? "rgba(180,80,10,0.22)" : phase === "sunset" ? "rgba(160,50,10,0.28)" : null;
           return (
             <>
               {/* Real grass photo */}
               <path d={groundPath} fill="url(#ct-grass-img)" />
-              {/* Phase tint — darkens at night, warm at sunrise/sunset */}
-              <path d={groundPath} fill="url(#ct-ground-tint)" opacity={tintOpacity} style={{ pointerEvents: "none" }} />
+              {/* Black darken overlay — night/dawn dimming */}
+              {darkOpacity > 0 && (
+                <path d={groundPath} fill={`rgba(0,0,0,${darkOpacity})`} style={{ pointerEvents: "none" }} />
+              )}
+              {/* Warm color tint for sunrise/sunset */}
+              {warmCol && (
+                <path d={groundPath} fill={warmCol} style={{ pointerEvents: "none" }} />
+              )}
             </>
           );
         })()}
