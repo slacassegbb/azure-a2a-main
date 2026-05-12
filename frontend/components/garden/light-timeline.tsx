@@ -130,7 +130,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   }, [schedule]);
 
   const { w: W, h: H } = size;
-  const PAD = W * 0.07;
+  const PAD = W * 0.03;
   const arcW = W - PAD * 2;
   const GNDLINE = H * 0.72;
   const ARC_H  = H * 0.55;
@@ -556,6 +556,53 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           </filter>
         </defs>
 
+        {/* ── Celestial arcs (behind mountains) ── */}
+        {(() => {
+          const cpY = GNDLINE - 2 * ARC_H;
+          const dayArcPath = `M ${arcStartX},${GNDLINE} Q ${arcMidX},${cpY} ${arcEndX},${GNDLINE}`;
+          const nightArcPath = `M ${arcEndX},${GNDLINE} Q ${arcMidX},${cpY} ${arcStartX},${GNDLINE}`;
+          const dayTrailProg = isDaytime ? dayProg : 1;
+          const daySubCpX = arcStartX + (arcMidX - arcStartX) * dayTrailProg;
+          const daySubCpY = GNDLINE - 2 * ARC_H * dayTrailProg;
+          const dayTrailEnd = isDaytime ? `${sunX},${sunY}` : `${arcEndX},${GNDLINE}`;
+          const dayTrailPath = `M ${arcStartX},${GNDLINE} Q ${daySubCpX},${daySubCpY} ${dayTrailEnd}`;
+          const nightSubCpX = arcEndX + (arcMidX - arcEndX) * nightProg;
+          const nightSubCpY = GNDLINE - 2 * ARC_H * nightProg;
+          const nightTrailPath = nightProg > 0.01
+            ? `M ${arcEndX},${GNDLINE} Q ${nightSubCpX},${nightSubCpY} ${moonX},${moonY}`
+            : null;
+          return (
+            <>
+              <path d={dayArcPath} fill="none" stroke="#FFD700" strokeWidth={1.5}
+                strokeDasharray="6 10" opacity={isDaytime ? 0.22 : 0.12}>
+                <animate attributeName="stroke-dashoffset" from="16" to="0" dur="1.2s" repeatCount="indefinite" />
+              </path>
+              <path d={dayTrailPath} fill="none" stroke="#FF8C00" strokeWidth={12}
+                strokeLinecap="round" opacity={isDaytime ? 0.14 : 0.07} />
+              <path d={dayTrailPath} fill="none" stroke="#FFD700" strokeWidth={2.5} strokeLinecap="round">
+                <animate attributeName="opacity"
+                  values={isDaytime ? "0.65;0.92;0.65" : "0.28;0.45;0.28"}
+                  dur="2.5s" repeatCount="indefinite" />
+              </path>
+              {!isDaytime && (
+                <path d={nightArcPath} fill="none" stroke="#9fa8da" strokeWidth={1.5}
+                  strokeDasharray="6 10" opacity={0.20}>
+                  <animate attributeName="stroke-dashoffset" from="0" to="16" dur="1.8s" repeatCount="indefinite" />
+                </path>
+              )}
+              {nightTrailPath && (
+                <>
+                  <path d={nightTrailPath} fill="none" stroke="#7986cb" strokeWidth={10}
+                    strokeLinecap="round" opacity={0.13} />
+                  <path d={nightTrailPath} fill="none" stroke="#c5cae9" strokeWidth={2.5} strokeLinecap="round">
+                    <animate attributeName="opacity" values="0.50;0.80;0.50" dur="3s" repeatCount="indefinite" />
+                  </path>
+                </>
+              )}
+            </>
+          );
+        })()}
+
         {/* ── Far mountain range ── */}
         <path d={farPath} fill={MTN_FAR[phase]} opacity={0.92} />
 
@@ -592,72 +639,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             style={{ pointerEvents: "none" }} />
         )}
 
-
-        {/* ── Celestial arcs ── */}
-        {(() => {
-          // Both arcs share the same apex: arcMidX, GNDLINE - 2*ARC_H (so peak = GNDLINE - ARC_H)
-          const cpY = GNDLINE - 2 * ARC_H;
-
-          // Day arc: sunrise → sunset (golden)
-          const dayArcPath = `M ${arcStartX},${GNDLINE} Q ${arcMidX},${cpY} ${arcEndX},${GNDLINE}`;
-
-          // Night arc: sunset → sunrise (silver), mirror of day arc, shares endpoints
-          const nightArcPath = `M ${arcEndX},${GNDLINE} Q ${arcMidX},${cpY} ${arcStartX},${GNDLINE}`;
-
-          // Day trail: grows from arcStartX to sunX as day progresses; full arc at night
-          const dayTrailProg = isDaytime ? dayProg : 1;
-          const daySubCpX = arcStartX + (arcMidX - arcStartX) * dayTrailProg;
-          const daySubCpY = GNDLINE - 2 * ARC_H * dayTrailProg;
-          const dayTrailEnd = isDaytime ? `${sunX},${sunY}` : `${arcEndX},${GNDLINE}`;
-          const dayTrailPath = `M ${arcStartX},${GNDLINE} Q ${daySubCpX},${daySubCpY} ${dayTrailEnd}`;
-
-          // Night trail: grows from arcEndX to moonX as night progresses
-          const nightSubCpX = arcEndX + (arcMidX - arcEndX) * nightProg;
-          const nightSubCpY = GNDLINE - 2 * ARC_H * nightProg;
-          const nightTrailPath = nightProg > 0.01
-            ? `M ${arcEndX},${GNDLINE} Q ${nightSubCpX},${nightSubCpY} ${moonX},${moonY}`
-            : null;
-
-          return (
-            <>
-              {/* Full day arc — animated flowing dashes */}
-              <path d={dayArcPath} fill="none" stroke="#FFD700" strokeWidth={1.5}
-                strokeDasharray="6 10" opacity={isDaytime ? 0.22 : 0.12}>
-                <animate attributeName="stroke-dashoffset" from="16" to="0" dur="1.2s" repeatCount="indefinite" />
-              </path>
-
-              {/* Day trail — glowing gold with pulse */}
-              <path d={dayTrailPath} fill="none" stroke="#FF8C00" strokeWidth={12}
-                strokeLinecap="round" opacity={isDaytime ? 0.14 : 0.07} />
-              <path d={dayTrailPath} fill="none" stroke="#FFD700" strokeWidth={2.5}
-                strokeLinecap="round">
-                <animate attributeName="opacity"
-                  values={isDaytime ? "0.65;0.92;0.65" : "0.28;0.45;0.28"}
-                  dur="2.5s" repeatCount="indefinite" />
-              </path>
-
-              {/* Full night arc — animated flowing dashes silver */}
-              {!isDaytime && (
-                <path d={nightArcPath} fill="none" stroke="#9fa8da" strokeWidth={1.5}
-                  strokeDasharray="6 10" opacity={0.20}>
-                  <animate attributeName="stroke-dashoffset" from="0" to="16" dur="1.8s" repeatCount="indefinite" />
-                </path>
-              )}
-
-              {/* Night trail — glowing silver with pulse */}
-              {nightTrailPath && (
-                <>
-                  <path d={nightTrailPath} fill="none" stroke="#7986cb" strokeWidth={10}
-                    strokeLinecap="round" opacity={0.13} />
-                  <path d={nightTrailPath} fill="none" stroke="#c5cae9" strokeWidth={2.5}
-                    strokeLinecap="round">
-                    <animate attributeName="opacity" values="0.50;0.80;0.50" dur="3s" repeatCount="indefinite" />
-                  </path>
-                </>
-              )}
-            </>
-          );
-        })()}
 
         {/* ── Sun ── */}
         {isDaytime && (() => {
@@ -761,25 +742,22 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         ].map(({ x, label, type, col }) => {
           const active = dragging === type;
           const cr = 5;
-          const circleY = GNDLINE + 18;
-          const labelY = circleY + 13;
+          const labelY = GNDLINE + 16;
+          const circleY = labelY + 10;
           return (
             <g key={type} onPointerDown={handlePointerDown(type)} style={{ cursor: "ew-resize" }}>
               {/* Wide transparent hit area */}
-              <rect x={x - 20} y={GNDLINE - 4} width={40} height={labelY - GNDLINE + 10} fill="transparent" />
-              {/* Short tick from ground to circle */}
-              <line x1={x} y1={GNDLINE} x2={x} y2={circleY - cr}
-                stroke={col} strokeWidth={1} opacity={active ? 0.9 : 0.35} />
-              {/* Small draggable circle */}
-              <circle cx={x} cy={circleY} r={active ? cr + 2 : cr}
-                fill={active ? col : "rgba(0,0,0,0.55)"}
-                stroke={col} strokeWidth={1.5}
-                filter={active ? "url(#ct-glow)" : undefined} />
+              <rect x={x - 22} y={GNDLINE} width={44} height={circleY + cr + 4 - GNDLINE} fill="transparent" />
               {/* Time label */}
               <text x={x} y={labelY} textAnchor="middle" fontSize={labelFS} fontWeight="600"
                 fill={active ? col : "rgba(255,255,255,0.55)"} fontFamily="monospace">
                 {label}
               </text>
+              {/* Small draggable circle below label */}
+              <circle cx={x} cy={circleY} r={active ? cr + 2 : cr}
+                fill={active ? col : "rgba(0,0,0,0.55)"}
+                stroke={col} strokeWidth={1.5}
+                filter={active ? "url(#ct-glow)" : undefined} />
             </g>
           );
         })}
