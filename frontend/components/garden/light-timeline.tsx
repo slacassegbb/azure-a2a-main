@@ -60,28 +60,41 @@ const PINE_COL: Record<string, string> = { night: "#030703", sunrise: "#070d07",
 // ── Mountain peak tables ───────────────────────────────────────────────────
 // [x_fraction_of_W,  y_fraction_of_maxH]
 const FAR_PEAKS: [number, number][] = [
-  [0, 0.12], [0.04, 0.44], [0.09, 0.20], [0.14, 0.66], [0.20, 0.36],
-  [0.25, 0.74], [0.31, 0.40], [0.36, 0.58], [0.42, 0.24], [0.47, 0.82],
-  [0.53, 0.46], [0.58, 0.72], [0.63, 0.30], [0.69, 0.64], [0.74, 0.22],
-  [0.80, 0.56], [0.85, 0.18], [0.91, 0.50], [0.96, 0.14], [1.0, 0.30],
+  [0, 0.15], [0.08, 0.30], [0.18, 0.72], [0.28, 0.38], [0.38, 0.85],
+  [0.50, 0.50], [0.60, 0.78], [0.70, 0.28], [0.82, 0.62], [0.92, 0.20], [1.0, 0.35],
 ];
 const MID_PEAKS: [number, number][] = [
-  [0, 0.10], [0.06, 0.32], [0.12, 0.14], [0.19, 0.44], [0.26, 0.22],
-  [0.33, 0.40], [0.40, 0.12], [0.47, 0.50], [0.54, 0.26], [0.61, 0.42],
-  [0.68, 0.16], [0.75, 0.38], [0.82, 0.10], [0.89, 0.32], [0.96, 0.08], [1.0, 0.24],
+  [0, 0.08], [0.10, 0.38], [0.22, 0.16], [0.35, 0.52], [0.48, 0.22],
+  [0.60, 0.46], [0.72, 0.14], [0.84, 0.40], [0.95, 0.10], [1.0, 0.26],
 ];
 const NEAR_PEAKS: [number, number][] = [
-  [0, 0.06], [0.07, 0.26], [0.14, 0.10], [0.21, 0.36], [0.29, 0.16],
-  [0.37, 0.30], [0.45, 0.08], [0.52, 0.40], [0.60, 0.20], [0.68, 0.34],
-  [0.76, 0.10], [0.84, 0.28], [0.92, 0.06], [1.0, 0.18],
+  [0, 0.05], [0.12, 0.32], [0.26, 0.12], [0.42, 0.44], [0.57, 0.18],
+  [0.70, 0.36], [0.84, 0.08], [1.0, 0.22],
 ];
 
 // Pine tree x-positions on near mountain
 const PINE_XS = [0.04, 0.09, 0.16, 0.25, 0.32, 0.38, 0.44, 0.53, 0.60, 0.65, 0.72, 0.79, 0.87, 0.93, 0.98];
 
 function buildMtnPath(peaks: [number, number][], W: number, GNDLINE: number, maxH: number): string {
-  const pts = peaks.map(([fx, fy]) => `${(fx * W).toFixed(1)},${(GNDLINE - fy * maxH).toFixed(1)}`);
-  return `M 0,${GNDLINE} L ${pts.join(" L ")} L ${W},${GNDLINE} Z`;
+  // Convert to pixel coords
+  const pts = peaks.map(([fx, fy]) => [fx * W, GNDLINE - fy * maxH] as [number, number]);
+  if (pts.length < 2) return "";
+  // Smooth curve using cardinal spline (tension 0.4) — rounds the peaks nicely
+  const tension = 0.4;
+  let d = `M ${pts[0][0].toFixed(1)},${GNDLINE}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const cp1x = p1[0] + (p2[0] - p0[0]) * tension;
+    const cp1y = p1[1] + (p2[1] - p0[1]) * tension;
+    const cp2x = p2[0] - (p3[0] - p1[0]) * tension;
+    const cp2y = p2[1] - (p3[1] - p1[1]) * tension;
+    d += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  d += ` L ${W},${GNDLINE} Z`;
+  return d;
 }
 
 function getMtnY(peaks: [number, number][], fx: number, GNDLINE: number, maxH: number): number {
