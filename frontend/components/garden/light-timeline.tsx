@@ -710,32 +710,46 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         ))}
 
 
-        {/* ══ DRAG HANDLES — minimal circles + labels ══ */}
-        {[
-          { x: srX, label: fmt(displaySunrise), type: "sunrise" as const, col: "#ff9f43" },
-          { x: ssX, label: fmt(displaySunset),  type: "sunset"  as const, col: "#f7971e" },
-        ].map(({ x, label, type, col }) => {
-          const active = dragging === type;
-          const cr = 5;
-          const circleY = GNDLINE - 10; // sits on the arc just above ground
-          const labelY  = circleY - 9;  // label floats above the circle
+        {/* Drag handles on arc in sky */}
+        {(() => {
+          const cpY = GNDLINE - 2 * ARC_H;
+          const qBez = (t: number): [number, number] => {
+            const mt = 1 - t;
+            return [
+              mt*mt*arcStartX + 2*mt*t*arcMidX + t*t*arcEndX,
+              mt*mt*GNDLINE   + 2*mt*t*cpY      + t*t*GNDLINE,
+            ];
+          };
+          const T = 0.13;
+          const [srMx, srMy] = qBez(T);
+          const [ssMx, ssMy] = qBez(1 - T);
           return (
-            <g key={type} onPointerDown={handlePointerDown(type)} style={{ cursor: "ew-resize" }}>
-              {/* Hit area spanning from label to just below ground */}
-              <rect x={x - 22} y={labelY - 12} width={44} height={GNDLINE - labelY + 20} fill="transparent" />
-              {/* Time label above circle */}
-              <text x={x} y={labelY} textAnchor="middle" fontSize={labelFS} fontWeight="600"
-                fill={active ? col : "rgba(255,255,255,0.70)"} fontFamily="monospace">
-                {label}
-              </text>
-              {/* Small draggable circle at arc base */}
-              <circle cx={x} cy={circleY} r={active ? cr + 2 : cr}
-                fill={active ? col : "rgba(0,0,0,0.55)"}
-                stroke={col} strokeWidth={1.5}
-                filter={active ? "url(#ct-glow)" : undefined} />
-            </g>
+            <>
+              {([
+                { mx: srMx, my: srMy, hx: srX, label: fmt(displaySunrise), type: "sunrise" as const, col: "#ff9f43", anchor: "end" as const },
+                { mx: ssMx, my: ssMy, hx: ssX, label: fmt(displaySunset),  type: "sunset"  as const, col: "#f7971e", anchor: "start" as const },
+              ] as const).map(({ mx, my, hx, label, type, col, anchor }) => {
+                const active = dragging === type;
+                const cr = 5;
+                return (
+                  <g key={type} onPointerDown={handlePointerDown(type)} style={{ cursor: "ew-resize" }}>
+                    <rect x={mx - 26} y={my - 26} width={52} height={52} fill="transparent" />
+                    <rect x={hx - 16} y={GNDLINE - 6} width={32} height={20} fill="transparent" />
+                    <circle cx={mx} cy={my} r={active ? cr + 2 : cr}
+                      fill={active ? col : "rgba(0,0,0,0.60)"}
+                      stroke={col} strokeWidth={1.5}
+                      filter={active ? "url(#ct-glow)" : undefined} />
+                    <text x={anchor === "end" ? mx - 9 : mx + 9} y={my - 8}
+                      textAnchor={anchor} fontSize={labelFS} fontWeight="600"
+                      fill={active ? col : "rgba(255,255,255,0.75)"} fontFamily="monospace">
+                      {label}
+                    </text>
+                  </g>
+                );
+              })}
+            </>
           );
-        })}
+        })()}
 
         {/* ── Drag tooltip (floats above while dragging) ── */}
         {dragging && dragHour !== null && (() => {
