@@ -693,41 +693,10 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             C ${W*0.56},${GNDLINE-groundBump*1.0} ${W*0.68},${GNDLINE-groundBump*0.3} ${W*0.82},${GNDLINE-groundBump*0.6}
             C ${W*0.92},${GNDLINE-groundBump*0.8} ${W*0.97},${GNDLINE-groundBump*0.2} ${W},${GNDLINE-groundBump*0.3}`;
 
-          // Approximate the edge curve Y for blade placement using the same bezier formula
-          const approxEdgeY = (t: number) => {
-            return GNDLINE - groundBump * (0.55 + 0.38 * Math.sin(t * Math.PI * 2.1 + 0.55) + 0.15 * Math.sin(t * Math.PI * 5.2 + 1.9));
-          };
-
-          // Grass blade colors per phase
-          const bladeLight = isDay ? "#78cc3a" : isNight ? "#2a5218" : "#4a9028";
-          const bladeDark  = isDay ? "#4e9e20" : isNight ? "#1c3c10" : "#306818";
-
-          // 60 blades across the width
-          const blades = Array.from({ length: 60 }, (_, i) => {
-            const t = i / 59;
-            const x = t * W + Math.sin(i * 7.1) * W * 0.004;
-            const y = approxEdgeY(t);
-            const h = groundBump * (0.22 + Math.abs(Math.sin(i * 2.3 + 0.8)) * 0.20);
-            const tilt = Math.sin(i * 1.7 + 0.5) * 3.5;
-            const w = 0.6 + Math.abs(Math.cos(i * 2.9)) * 0.9;
-            const col = i % 3 === 0 ? bladeLight : bladeDark;
-            return { x, y, h, tilt, w, col };
-          });
-
           return (
             <>
-              {/* Main ground fill */}
+              {/* Main ground fill with gradient */}
               <path d={`${edge} L ${W},${H} L 0,${H} Z`} fill="url(#ct-ground)" />
-
-              {/* Grass blades — individual curved strokes along the top edge */}
-              {blades.map(({ x, y, h, tilt, w, col }, i) => (
-                <path key={i}
-                  d={`M ${x},${y+1} C ${x+tilt*0.3},${y-h*0.35} ${x+tilt},${y-h*0.72} ${x+tilt*0.6},${y-h}`}
-                  fill="none" stroke={col} strokeWidth={w} strokeLinecap="round"
-                  opacity={0.40 + Math.abs(Math.sin(i * 1.6)) * 0.45}
-                  style={{ pointerEvents: "none" }}
-                />
-              ))}
             </>
           );
         })()}
