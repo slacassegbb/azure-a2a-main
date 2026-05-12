@@ -748,18 +748,18 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         ].map(({ x, label, type, col }) => {
           const active = dragging === type;
           const cr = 5;
-          const labelY = GNDLINE + 16;
-          const circleY = labelY + 10;
+          const circleY = GNDLINE - 10; // sits on the arc just above ground
+          const labelY  = circleY - 9;  // label floats above the circle
           return (
             <g key={type} onPointerDown={handlePointerDown(type)} style={{ cursor: "ew-resize" }}>
-              {/* Wide transparent hit area */}
-              <rect x={x - 22} y={GNDLINE} width={44} height={circleY + cr + 4 - GNDLINE} fill="transparent" />
-              {/* Time label */}
+              {/* Hit area spanning from label to just below ground */}
+              <rect x={x - 22} y={labelY - 12} width={44} height={GNDLINE - labelY + 20} fill="transparent" />
+              {/* Time label above circle */}
               <text x={x} y={labelY} textAnchor="middle" fontSize={labelFS} fontWeight="600"
-                fill={active ? col : "rgba(255,255,255,0.55)"} fontFamily="monospace">
+                fill={active ? col : "rgba(255,255,255,0.70)"} fontFamily="monospace">
                 {label}
               </text>
-              {/* Small draggable circle below label */}
+              {/* Small draggable circle at arc base */}
               <circle cx={x} cy={circleY} r={active ? cr + 2 : cr}
                 fill={active ? col : "rgba(0,0,0,0.55)"}
                 stroke={col} strokeWidth={1.5}
