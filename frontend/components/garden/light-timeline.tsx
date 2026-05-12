@@ -731,7 +731,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           );
         })()}
 
-        {/* ── Main ground / grass ── */}
+        {/* ── Main ground ── */}
         <path
           d={`M 0,${GNDLINE}
               C ${W*0.15},${GNDLINE - groundBump * 0.9} ${W*0.28},${GNDLINE - groundBump * 0.4} ${W*0.42},${GNDLINE - groundBump * 0.7}
@@ -739,7 +739,19 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
               C ${W*0.92},${GNDLINE - groundBump * 0.8} ${W*0.97},${GNDLINE - groundBump * 0.2} ${W},${GNDLINE - groundBump * 0.3}
               L ${W},${H} L 0,${H} Z`}
           fill="url(#ct-ground)"
-          stroke={isDay ? "#3a7d1e" : "#1a3a0e"} strokeWidth={2}
+        />
+        {/* Soft grass edge — slightly lighter strip along the top of the ground, no hard line */}
+        <path
+          d={`M 0,${GNDLINE}
+              C ${W*0.15},${GNDLINE - groundBump * 0.9} ${W*0.28},${GNDLINE - groundBump * 0.4} ${W*0.42},${GNDLINE - groundBump * 0.7}
+              C ${W*0.56},${GNDLINE - groundBump * 1.0} ${W*0.68},${GNDLINE - groundBump * 0.3} ${W*0.82},${GNDLINE - groundBump * 0.6}
+              C ${W*0.92},${GNDLINE - groundBump * 0.8} ${W*0.97},${GNDLINE - groundBump * 0.2} ${W},${GNDLINE - groundBump * 0.3}`}
+          fill="none"
+          stroke={isDay ? "#5abf28" : isNight ? "#1e4a14" : "#3a8a18"}
+          strokeWidth={groundBump * 0.55}
+          strokeLinecap="round"
+          opacity={0.55}
+          style={{ pointerEvents: "none" }}
         />
 
         {/* ── Garden pots & plants ── */}
@@ -750,9 +762,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           </g>
         ))}
 
-        {/* ── Horizon line ── */}
-        <line x1={0} y1={GNDLINE} x2={W} y2={GNDLINE}
-          stroke={isDay ? "#4caf50" : "#1a3a0e"} strokeWidth={1.5} opacity={0.4} />
 
         {/* ══ SUNRISE DRAG HANDLE ══════════════════════════════════════════ */}
         <g onPointerDown={handlePointerDown("sunrise")} style={{ cursor: "ew-resize" }}>
