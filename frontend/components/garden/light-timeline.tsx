@@ -260,6 +260,16 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   // 2 pot positions
   const POT_XS = [W * 0.38, W * 0.62];
 
+  // Water % per pot (derived from calibrated weight range)
+  const latestReading = readings && readings.length > 0 ? readings[readings.length - 1] : null;
+  const potWaterPcts: (number | null)[] = POT_XS.map((_, i) => {
+    const pot = gardenConfig?.pots?.[i];
+    if (!pot || pot.dry_weight_g == null || pot.wet_weight_g == null || pot.wet_weight_g <= pot.dry_weight_g) return null;
+    const weightG = i === 0 ? latestReading?.weight_g : latestReading?.weight2_g;
+    if (weightG == null) return null;
+    return Math.min(100, Math.max(0, ((weightG - pot.dry_weight_g) / (pot.wet_weight_g - pot.dry_weight_g)) * 100));
+  });
+
   // Stars
   const starList = [
     [0.08, 0.08], [0.18, 0.22], [0.28, 0.06], [0.42, 0.14], [0.55, 0.05],
@@ -279,18 +289,65 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
     );
   };
 
-  const renderPot = (cx: number) => {
+  const renderPot = (cx: number, potIdx: number, waterPct: number | null) => {
     const rim = potW * 0.55;
     const bot = potW * 0.42;
+    const clipId = `lt-pot-clip-${potIdx}`;
+    const wgId   = `lt-water-grad-${potIdx}`;
+
+    // Water fill inside pot (from bottom up)
+    const fillH = waterPct != null ? (waterPct / 100) * potH * 0.88 : 0;
+    const fillY = potY + potH * 0.88 - fillH;
+
+    const waterCol = waterPct == null ? "#4a3728"
+      : waterPct <= 10 ? "#c0392b"
+      : waterPct <= 30 ? "#e67e22"
+      : waterPct <= 70 ? "#27ae60"
+      : "#2980b9";
+    const waterLight = waterPct == null ? "#5a4738"
+      : waterPct <= 10 ? "#e74c3c"
+      : waterPct <= 30 ? "#f39c12"
+      : waterPct <= 70 ? "#2ecc71"
+      : "#3498db";
+
     return (
       <g>
+        <defs>
+          <clipPath id={clipId}>
+            <path d={`M ${cx - rim},${potY} L ${cx - bot},${potY + potH} L ${cx + bot},${potY + potH} L ${cx + rim},${potY} Z`} />
+          </clipPath>
+          <linearGradient id={wgId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={waterLight} />
+            <stop offset="100%" stopColor={waterCol} />
+          </linearGradient>
+        </defs>
+
         {/* Pot body */}
         <path d={`M ${cx - rim},${potY} L ${cx - bot},${potY + potH} L ${cx + bot},${potY + potH} L ${cx + rim},${potY} Z`}
           fill="#9e5c28" stroke="#7a4018" strokeWidth={1.5} />
+
+        {/* Soil fill inside pot */}
+        <rect x={cx - rim} y={potY} width={rim * 2} height={potH}
+          fill="#4a3020" clipPath={`url(#${clipId})`} />
+
+        {/* Water fill */}
+        {fillH > 0 && (
+          <g clipPath={`url(#${clipId})`}>
+            <rect x={cx - rim} y={fillY} width={rim * 2} height={fillH + 2}
+              fill={`url(#${wgId})`} opacity={0.82} />
+            {/* Wave */}
+            <path d={`M${cx - rim},${fillY} Q${cx - rim * 0.5},${fillY - potH * 0.05} ${cx},${fillY} Q${cx + rim * 0.5},${fillY + potH * 0.05} ${cx + rim},${fillY} L${cx + rim},${fillY + potH * 0.07} Q${cx + rim * 0.5},${fillY + potH * 0.12} ${cx},${fillY + potH * 0.07} Q${cx - rim * 0.5},${fillY + potH * 0.02} ${cx - rim},${fillY + potH * 0.07} Z`}
+              fill={waterLight} opacity={0.45}>
+              <animateTransform attributeName="transform" type="translate"
+                values={`0 0; ${rim * 0.2} 0; 0 0`} dur="3.5s" repeatCount="indefinite" />
+            </path>
+          </g>
+        )}
+
         {/* Rim */}
         <rect x={cx - rim - 2} y={potY - potH * 0.12} width={(rim + 2) * 2} height={potH * 0.14} rx={3}
           fill="#b86c30" stroke="#8a4e1e" strokeWidth={1} />
-        {/* Soil */}
+        {/* Soil top surface */}
         <ellipse cx={cx} cy={potY - potH * 0.05} rx={rim - 1} ry={potH * 0.08}
           fill="#3d2410" stroke="#2a1808" strokeWidth={1} />
       </g>
@@ -692,7 +749,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         {POT_XS.map((cx, i) => (
           <g key={i}>
             {renderPlant(cx, i)}
-            {renderPot(cx)}
+            {renderPot(cx, i, potWaterPcts[i])}
           </g>
         ))}
 
