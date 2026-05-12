@@ -96,6 +96,7 @@ function getMtnY(peaks: [number, number][], fx: number, GNDLINE: number, maxH: n
 export default function LightTimeline({ schedule, readings = [], gardenConfig }: LightTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
   const [progress, setProgress] = useState(getDayProgress());
   const [brightness, setBrightness] = useState(0);
@@ -115,7 +116,9 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
 
   useEffect(() => {
     const update = () => {
-      setProgress(getDayProgress());
+      const p = getDayProgress();
+      setProgress(p);
+      if (videoRef.current) videoRef.current.currentTime = p * 8.0;
       if (schedule) {
         setBrightness(getCurrentBrightness(schedule));
         setPhase(getLightPhase(schedule));
@@ -457,38 +460,27 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   };
 
   return (
-    <div ref={containerRef} className="rounded-2xl overflow-hidden w-full h-full" style={{ background: SKY_DARK[phase] }}>
+    <div ref={containerRef} className="rounded-2xl overflow-hidden w-full h-full" style={{ background: "#000", position: "relative" }}>
+      {/* Video sky background — scrubbed to current time of day */}
+      <video
+        ref={videoRef}
+        src="/sky_background.mp4"
+        muted playsInline preload="auto"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+      />
       <svg
         ref={svgRef}
         width={W} height={H}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        style={{ display: "block", touchAction: "none" }}
+        style={{ display: "block", touchAction: "none", position: "relative" }}
       >
         <defs>
-          {/* Multi-stop sky gradient */}
-          <linearGradient id="ct-sky" x1="0" y1="0" x2="0" y2="1">
-            {SKY_STOPS[phase].map(([off, col]) => (
-              <stop key={off} offset={off} stopColor={col} />
-            ))}
-          </linearGradient>
           <linearGradient id="ct-ground" x1="0" y1="0" x2="0" y2="1">
             {GROUND_STOPS[phase].map(([off, col]) => (
               <stop key={off} offset={off} stopColor={col} />
             ))}
           </linearGradient>
-          {/* Horizon haze: transparent → haze colour at ground */}
-          <linearGradient id="ct-haze" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor={HAZE_COL[phase]} stopOpacity={0} />
-            <stop offset="65%"  stopColor={HAZE_COL[phase]} stopOpacity={0} />
-            <stop offset="100%" stopColor={HAZE_COL[phase]} stopOpacity={HAZE_OPC[phase]} />
-          </linearGradient>
-          {/* Milky Way radial smear */}
-          <radialGradient id="ct-milky" cx="55%" cy="38%" r="55%">
-            <stop offset="0%"   stopColor="#7080b8" stopOpacity={0.10} />
-            <stop offset="60%"  stopColor="#4858a0" stopOpacity={0.04} />
-            <stop offset="100%" stopColor="#4858a0" stopOpacity={0} />
-          </radialGradient>
           <radialGradient id="ct-sunhalo" cx="50%" cy="50%" r="50%">
             <stop offset="0%"   stopColor="#FFE060" stopOpacity={0.65} />
             <stop offset="55%"  stopColor="#FFB800" stopOpacity={0.20} />
@@ -496,19 +488,8 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           </radialGradient>
           <radialGradient id="ct-moonhalo" cx="50%" cy="50%" r="50%">
             <stop offset="0%"   stopColor="#e8eaf6" stopOpacity={0.45} />
-            <stop offset="70%"  stopColor="#9fa8da" stopOpacity={0.08} />
             <stop offset="100%" stopColor="#9fa8da" stopOpacity={0} />
           </radialGradient>
-          {/* Horizon burst for sunrise / sunset */}
-          <radialGradient id="ct-hglow" cx="50%" cy="100%" r="70%" fx="50%" fy="100%">
-            <stop offset="0%"   stopColor={phase === "sunrise" ? "#ff9040" : "#e85828"} stopOpacity={0.80} />
-            <stop offset="50%"  stopColor={phase === "sunrise" ? "#ff6010" : "#c03010"} stopOpacity={0.30} />
-            <stop offset="100%" stopColor="#000" stopOpacity={0} />
-          </radialGradient>
-          {/* Soft cloud blur */}
-          <filter id="ct-cloudblur" x="-30%" y="-60%" width="160%" height="220%">
-            <feGaussianBlur stdDeviation="6 5" />
-          </filter>
           <filter id="ct-glow">
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
@@ -517,55 +498,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.3" />
           </filter>
         </defs>
-
-        {/* ── Sky ── */}
-        <rect width={W} height={H} fill="url(#ct-sky)" />
-
-        {/* ── Milky Way smear (night only) ── */}
-        {isNight && (
-          <ellipse cx={W * 0.55} cy={GNDLINE * 0.42} rx={W * 0.60} ry={GNDLINE * 0.38}
-            fill="url(#ct-milky)" style={{ pointerEvents: "none" }} />
-        )}
-
-        {/* ── Stars (night / transition) ── */}
-        {(isNight || phase === "sunrise") && starList.map((s, i) => {
-          const dim = phase === "sunrise" ? 0.3 : 1;
-          const r   = i % 5 === 0 ? 2.0 : i % 3 === 0 ? 1.4 : 1.0;
-          return (
-            <circle key={i} cx={s.x} cy={s.y} r={r}
-              fill={i % 7 === 0 ? "#ffe8c8" : i % 5 === 0 ? "#c8d8ff" : "white"}
-              opacity={(0.50 + (i % 4) * 0.12) * dim}>
-              <animate attributeName="opacity"
-                values={`${(0.28 + (i % 4) * 0.10) * dim};${(0.85 + (i % 3) * 0.08) * dim};${(0.28 + (i % 4) * 0.10) * dim}`}
-                dur={`${2.0 + i * 0.22}s`} repeatCount="indefinite" />
-            </circle>
-          );
-        })}
-
-        {/* ── Crepuscular rays (sunrise / sunset) ── */}
-        {(phase === "sunrise" || phase === "sunset") && (
-          <g opacity={0.10} style={{ pointerEvents: "none" }}>
-            {[0.22, 0.35, 0.50, 0.65, 0.78].map((fx, i) => {
-              const x = fx * W;
-              const spread = W * 0.035;
-              const col = phase === "sunrise" ? "#ffa860" : "#ff8040";
-              return (
-                <path key={i}
-                  d={`M ${W * 0.50},${GNDLINE * 1.1} L ${x - spread},0 L ${x + spread},0 Z`}
-                  fill={col} opacity={0.6 - i * 0.08} />
-              );
-            })}
-          </g>
-        )}
-
-        {/* ── Horizon atmospheric glow (sunrise / sunset) ── */}
-        {(phase === "sunrise" || phase === "sunset") && (
-          <ellipse cx={W / 2} cy={GNDLINE} rx={W * 0.78} ry={GNDLINE * 0.58}
-            fill="url(#ct-hglow)" opacity={0.90} />
-        )}
-
-        {/* ── Horizon haze (always — colour varies by phase) ── */}
-        <rect width={W} height={GNDLINE} fill="url(#ct-haze)" style={{ pointerEvents: "none" }} />
 
         {/* ── Far mountain range ── */}
         <path d={farPath} fill={MTN_FAR[phase]} opacity={0.92} />
@@ -603,33 +535,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             style={{ pointerEvents: "none" }} />
         )}
 
-        {/* ── Clouds (day / sunrise) ── */}
-        {(isDay || phase === "sunrise") && [
-          { x: W * 0.14, y: H * 0.09, s: 1.00, op: 0.92 },
-          { x: W * 0.58, y: H * 0.06, s: 0.78, op: 0.85 },
-          { x: W * 0.82, y: H * 0.15, s: 0.62, op: 0.80 },
-        ].map((c, i) => {
-          const sc = c.s * W * 0.055;
-          const tint = phase === "sunrise" ? "#ffe0c0" : "white";
-          const shadow = phase === "sunrise" ? "#d09060" : "#b8ccd8";
-          return (
-            <g key={i} opacity={c.op}>
-              {/* Soft shadow beneath */}
-              <g transform={`translate(${c.x + sc * 0.15},${c.y + sc * 0.45})`} filter="url(#ct-cloudblur)">
-                <ellipse cx={0} cy={0} rx={sc * 2.0} ry={sc * 0.55} fill={shadow} opacity={0.35} />
-              </g>
-              {/* Cloud body — blurred blob cluster */}
-              <g transform={`translate(${c.x},${c.y})`} filter="url(#ct-cloudblur)">
-                <ellipse cx={0}         cy={0}         rx={sc * 2.0} ry={sc * 1.1} fill={tint} />
-                <ellipse cx={sc * -1.2} cy={sc * 0.4}  rx={sc * 1.3} ry={sc * 0.9} fill={tint} />
-                <ellipse cx={sc * 1.3}  cy={sc * 0.3}  rx={sc * 1.5} ry={sc * 1.0} fill={tint} />
-                <ellipse cx={sc * -0.5} cy={sc * -0.5} rx={sc * 1.1} ry={sc * 0.9} fill={tint} />
-                <ellipse cx={sc * 0.7}  cy={sc * -0.4} rx={sc * 1.2} ry={sc * 0.9} fill={tint} />
-                <ellipse cx={0}         cy={sc * 0.7}  rx={sc * 2.2} ry={sc * 0.7} fill={tint} />
-              </g>
-            </g>
-          );
-        })}
 
         {/* ── Celestial arcs ── */}
         {(() => {
