@@ -616,21 +616,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           );
         })()}
 
-        {/* ── Far mountain range ── */}
-        <path d={farPath} fill={MTN_FAR[phase]} opacity={0.92} />
-
-        {/* Snow caps on tall far peaks (day only) */}
-        {isDay && FAR_PEAKS.filter(([, fy]) => fy > 0.60).map(([fx, fy], i) => {
-          const px = fx * W;
-          const py = GNDLINE - fy * FAR_MAX;
-          const sw = FAR_MAX * fy * 0.18;
-          return (
-            <polygon key={i}
-              points={`${px},${py} ${px - sw},${py + sw * 1.1} ${px + sw},${py + sw * 1.1}`}
-              fill="white" opacity={0.82} />
-          );
-        })}
-
         {/* ── Mid mountain range ── */}
         <path d={midPath} fill={MTN_MID[phase]} opacity={0.96} />
 
@@ -708,33 +693,41 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             C ${W*0.56},${GNDLINE-groundBump*1.0} ${W*0.68},${GNDLINE-groundBump*0.3} ${W*0.82},${GNDLINE-groundBump*0.6}
             C ${W*0.92},${GNDLINE-groundBump*0.8} ${W*0.97},${GNDLINE-groundBump*0.2} ${W},${GNDLINE-groundBump*0.3}`;
 
-          // Second undulating layer slightly below — adds depth
-          const edge2 = `M 0,${GNDLINE+groundBump*0.4}
-            C ${W*0.20},${GNDLINE+groundBump*0.05} ${W*0.35},${GNDLINE+groundBump*0.55} ${W*0.50},${GNDLINE+groundBump*0.20}
-            C ${W*0.65},${GNDLINE-groundBump*0.10} ${W*0.78},${GNDLINE+groundBump*0.45} ${W*0.90},${GNDLINE+groundBump*0.15}
-            C ${W*0.96},${GNDLINE+groundBump*0.35} ${W},${GNDLINE+groundBump*0.25} ${W},${GNDLINE+groundBump*0.30}`;
+          // Approximate the edge curve Y for blade placement using the same bezier formula
+          const approxEdgeY = (t: number) => {
+            return GNDLINE - groundBump * (0.55 + 0.38 * Math.sin(t * Math.PI * 2.1 + 0.55) + 0.15 * Math.sin(t * Math.PI * 5.2 + 1.9));
+          };
+
+          // Grass blade colors per phase
+          const bladeLight = isDay ? "#78cc3a" : isNight ? "#2a5218" : "#4a9028";
+          const bladeDark  = isDay ? "#4e9e20" : isNight ? "#1c3c10" : "#306818";
+
+          // 60 blades across the width
+          const blades = Array.from({ length: 60 }, (_, i) => {
+            const t = i / 59;
+            const x = t * W + Math.sin(i * 7.1) * W * 0.004;
+            const y = approxEdgeY(t);
+            const h = groundBump * (0.22 + Math.abs(Math.sin(i * 2.3 + 0.8)) * 0.20);
+            const tilt = Math.sin(i * 1.7 + 0.5) * 3.5;
+            const w = 0.6 + Math.abs(Math.cos(i * 2.9)) * 0.9;
+            const col = i % 3 === 0 ? bladeLight : bladeDark;
+            return { x, y, h, tilt, w, col };
+          });
 
           return (
             <>
-              {/* ── Main ground fill ── */}
+              {/* Main ground fill */}
               <path d={`${edge} L ${W},${H} L 0,${H} Z`} fill="url(#ct-ground)" />
 
-              {/* Slightly darker mid-ground layer for terrain depth */}
-              <path d={`${edge2} L ${W},${H} L 0,${H} Z`}
-                fill={GRASS_MID[phase]} opacity={0.55} style={{ pointerEvents: "none" }} />
-
-              {/* Soft grass highlight along the top contour — no hard line */}
-              <path d={edge} fill="none"
-                stroke={GRASS_COL[phase]} strokeWidth={groundBump * 0.70}
-                strokeLinecap="round" opacity={0.60}
-                style={{ pointerEvents: "none" }} />
-
-              {/* Subtle lighter rim right at the top — simulates dew / top-lit grass */}
-              <path d={edge} fill="none"
-                stroke={isDay ? "#90e040" : isNight ? "#2a5a20" : "#50a028"}
-                strokeWidth={groundBump * 0.20}
-                strokeLinecap="round" opacity={0.45}
-                style={{ pointerEvents: "none" }} />
+              {/* Grass blades — individual curved strokes along the top edge */}
+              {blades.map(({ x, y, h, tilt, w, col }, i) => (
+                <path key={i}
+                  d={`M ${x},${y+1} C ${x+tilt*0.3},${y-h*0.35} ${x+tilt},${y-h*0.72} ${x+tilt*0.6},${y-h}`}
+                  fill="none" stroke={col} strokeWidth={w} strokeLinecap="round"
+                  opacity={0.40 + Math.abs(Math.sin(i * 1.6)) * 0.45}
+                  style={{ pointerEvents: "none" }}
+                />
+              ))}
             </>
           );
         })()}
