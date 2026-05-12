@@ -306,7 +306,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
 
       case "germination": {
         const sh = Math.max(8, plantH * 0.7);
-        const domeW = potW * 1.1;
+        const domeW = potW * 0.55; // match pot rim width
         const domeH = plantMaxH * 0.75;
         return (
           <g key={idx}>
@@ -697,77 +697,53 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         ))}
 
 
-        {/* ══ SUNRISE DRAG HANDLE ══════════════════════════════════════════ */}
-        <g onPointerDown={handlePointerDown("sunrise")} style={{ cursor: "ew-resize" }}>
-          <rect x={srX - handleR * 1.5} y={GNDLINE - handleR * 3.5} width={handleR * 3} height={handleR * 5} fill="transparent" />
-          <line x1={srX} y1={GNDLINE} x2={srX} y2={GNDLINE - handleR * 2.2}
-            stroke={dragging === "sunrise" ? "#ff9f43" : "#666"} strokeWidth={3} strokeLinecap="round" />
-          <circle cx={srX} cy={GNDLINE - handleR * 2.4} r={handleR}
-            fill={dragging === "sunrise" ? "#ff9f43" : "#2d3748"}
-            stroke={dragging === "sunrise" ? "#fff" : "#ff9f43"} strokeWidth={2.5}
-            filter={dragging === "sunrise" ? "url(#ct-glow)" : undefined} />
-          <path d={`M ${srX - handleR * 0.35},${GNDLINE - handleR * 2.55} L ${srX},${GNDLINE - handleR * 2.85} L ${srX + handleR * 0.35},${GNDLINE - handleR * 2.55}`}
-            fill="none" stroke={dragging === "sunrise" ? "white" : "#ff9f43"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-          <rect x={srX - handleR * 1.7} y={GNDLINE + handleR * 0.3} width={handleR * 3.4} height={handleR * 1.1} rx={handleR * 0.4}
-            fill={dragging === "sunrise" ? "#ff9f43" : "#1a202c"} opacity={0.9} />
-          <text x={srX} y={GNDLINE + handleR * 1.15} textAnchor="middle" fontSize={labelFS} fontWeight="700"
-            fill={dragging === "sunrise" ? "white" : "#ff9f43"} fontFamily="monospace">
-            {fmt(displaySunrise)}
-          </text>
-        </g>
+        {/* ══ DRAG HANDLES — minimal circles + labels ══ */}
+        {[
+          { x: srX, label: fmt(displaySunrise), type: "sunrise" as const, col: "#ff9f43" },
+          { x: ssX, label: fmt(displaySunset),  type: "sunset"  as const, col: "#f7971e" },
+        ].map(({ x, label, type, col }) => {
+          const active = dragging === type;
+          const cr = 5;
+          const labelY = H - 6;
+          return (
+            <g key={type} onPointerDown={handlePointerDown(type)} style={{ cursor: "ew-resize" }}>
+              {/* Wide transparent hit area */}
+              <rect x={x - 20} y={GNDLINE - 4} width={40} height={H - GNDLINE + 4} fill="transparent" />
+              {/* Thin tick from ground down to circle */}
+              <line x1={x} y1={GNDLINE} x2={x} y2={labelY - 14}
+                stroke={col} strokeWidth={1} opacity={active ? 0.9 : 0.35} />
+              {/* Small draggable circle */}
+              <circle cx={x} cy={labelY - 14} r={active ? cr + 2 : cr}
+                fill={active ? col : "rgba(0,0,0,0.55)"}
+                stroke={col} strokeWidth={1.5}
+                filter={active ? "url(#ct-glow)" : undefined} />
+              {/* Time label */}
+              <text x={x} y={labelY} textAnchor="middle" fontSize={labelFS} fontWeight="600"
+                fill={active ? col : "rgba(255,255,255,0.55)"} fontFamily="monospace">
+                {label}
+              </text>
+            </g>
+          );
+        })}
 
-        {/* ══ SUNSET DRAG HANDLE ═══════════════════════════════════════════ */}
-        <g onPointerDown={handlePointerDown("sunset")} style={{ cursor: "ew-resize" }}>
-          <rect x={ssX - handleR * 1.5} y={GNDLINE - handleR * 3.5} width={handleR * 3} height={handleR * 5} fill="transparent" />
-          <line x1={ssX} y1={GNDLINE} x2={ssX} y2={GNDLINE - handleR * 2.2}
-            stroke={dragging === "sunset" ? "#f7971e" : "#666"} strokeWidth={3} strokeLinecap="round" />
-          <circle cx={ssX} cy={GNDLINE - handleR * 2.4} r={handleR}
-            fill={dragging === "sunset" ? "#f7971e" : "#2d3748"}
-            stroke={dragging === "sunset" ? "#fff" : "#f7971e"} strokeWidth={2.5}
-            filter={dragging === "sunset" ? "url(#ct-glow)" : undefined} />
-          <path d={`M ${ssX - handleR * 0.35},${GNDLINE - handleR * 2.25} L ${ssX},${GNDLINE - handleR * 1.95} L ${ssX + handleR * 0.35},${GNDLINE - handleR * 2.25}`}
-            fill="none" stroke={dragging === "sunset" ? "white" : "#f7971e"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-          <rect x={ssX - handleR * 1.7} y={GNDLINE + handleR * 0.3} width={handleR * 3.4} height={handleR * 1.1} rx={handleR * 0.4}
-            fill={dragging === "sunset" ? "#f7971e" : "#1a202c"} opacity={0.9} />
-          <text x={ssX} y={GNDLINE + handleR * 1.15} textAnchor="middle" fontSize={labelFS} fontWeight="700"
-            fill={dragging === "sunset" ? "white" : "#f7971e"} fontFamily="monospace">
-            {fmt(displaySunset)}
-          </text>
-        </g>
-
-        {/* ── Drag tooltip ── */}
+        {/* ── Drag tooltip (floats above while dragging) ── */}
         {dragging && dragHour !== null && (() => {
-          const tx = Math.max(50, Math.min(W - 50, xToSvg(dragHour)));
-          const ty = GNDLINE - handleR * 4.5;
+          const tx = Math.max(40, Math.min(W - 40, xToSvg(dragHour)));
+          const col = dragging === "sunrise" ? "#ff9f43" : "#f7971e";
           return (
             <g>
-              <rect x={tx - 34} y={ty - 14} width={68} height={26} rx={8}
-                fill={dragging === "sunrise" ? "#ff9f43" : "#f7971e"} filter="url(#ct-softshadow)" />
-              <text x={tx} y={ty + 4} textAnchor="middle" fontSize={fontSize} fontWeight="800"
+              <rect x={tx - 28} y={GNDLINE - 30} width={56} height={22} rx={6}
+                fill={col} opacity={0.95} filter="url(#ct-softshadow)" />
+              <text x={tx} y={GNDLINE - 15} textAnchor="middle" fontSize={fontSize} fontWeight="700"
                 fill="white" fontFamily="monospace">{fmt(dragHour)}</text>
-              <path d={`M ${tx - 7},${ty + 12} L ${tx},${ty + 20} L ${tx + 7},${ty + 12}`}
-                fill={dragging === "sunrise" ? "#ff9f43" : "#f7971e"} />
             </g>
           );
         })()}
 
         {/* ── 12 PM label ── */}
-        <text x={W / 2} y={GNDLINE + handleR * 1.15} textAnchor="middle" fontSize={labelFS}
-          fill="#4a5568" fontFamily="sans-serif">12 PM</text>
+        <text x={W / 2} y={H - 6} textAnchor="middle" fontSize={labelFS}
+          fill="rgba(255,255,255,0.25)" fontFamily="sans-serif">12 PM</text>
 
-        {/* ── Phase badge ── */}
-        {(() => {
-          const label = phase === "day" ? "☀ Daytime" : phase === "night" ? "🌙 Night" : phase === "sunrise" ? "🌅 Sunrise" : "🌇 Sunset";
-          const bg = phase === "night" ? "#1a237e" : phase === "day" ? "#f9a825" : "#e65100";
-          const fg = phase === "day" ? "#fff8e1" : "white";
-          const bw = 80, bh = 22, bx = W / 2 - bw / 2, by = H - bh - H * 0.02;
-          return (
-            <g>
-              <rect x={bx} y={by} width={bw} height={bh} rx={11} fill={bg} opacity={0.9} />
-              <text x={W / 2} y={by + 14} textAnchor="middle" fontSize={11} fontWeight="700" fill={fg}>{label}</text>
-            </g>
-          );
-        })()}
 
       </svg>
     </div>
