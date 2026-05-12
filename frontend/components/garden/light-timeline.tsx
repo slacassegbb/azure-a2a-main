@@ -546,7 +546,11 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         style={{ display: "block", touchAction: "none", position: "relative" }}
       >
         <defs>
-          <linearGradient id="ct-ground" x1="0" y1="0" x2="0" y2="1">
+          <pattern id="ct-grass-img" patternUnits="userSpaceOnUse" x="0" y={GNDLINE} width={W} height={H - GNDLINE}>
+            <image href="/grass.jpg" x="0" y="0" width={W} height={H - GNDLINE} preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+          {/* Tint overlay gradient — darkens grass at night/sunrise/sunset */}
+          <linearGradient id="ct-ground-tint" x1="0" y1="0" x2="0" y2="1">
             {GROUND_STOPS[phase].map(([off, col]) => (
               <stop key={off} offset={off} stopColor={col} />
             ))}
@@ -693,10 +697,14 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             C ${W*0.56},${GNDLINE-groundBump*1.0} ${W*0.68},${GNDLINE-groundBump*0.3} ${W*0.82},${GNDLINE-groundBump*0.6}
             C ${W*0.92},${GNDLINE-groundBump*0.8} ${W*0.97},${GNDLINE-groundBump*0.2} ${W},${GNDLINE-groundBump*0.3}`;
 
+          const groundPath = `${edge} L ${W},${H} L 0,${H} Z`;
+          const tintOpacity = isDay ? 0.10 : isNight ? 0.72 : 0.50;
           return (
             <>
-              {/* Main ground fill with gradient */}
-              <path d={`${edge} L ${W},${H} L 0,${H} Z`} fill="url(#ct-ground)" />
+              {/* Real grass photo */}
+              <path d={groundPath} fill="url(#ct-grass-img)" />
+              {/* Phase tint — darkens at night, warm at sunrise/sunset */}
+              <path d={groundPath} fill="url(#ct-ground-tint)" opacity={tintOpacity} style={{ pointerEvents: "none" }} />
             </>
           );
         })()}
