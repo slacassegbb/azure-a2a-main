@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${access_token}` },
       body: JSON.stringify({
-        query: `CHAT_MODE: ${query}`,
+        query,
         user_id: "user_3",
         session_id: "user_3",
         enable_routing: true,
