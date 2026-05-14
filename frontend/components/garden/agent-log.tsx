@@ -12,7 +12,7 @@ export default function AgentLog({ entries }: AgentLogProps) {
   const sorted = [...entries].reverse(); // newest first
 
   return (
-    <div className="rounded-xl p-3 md:p-4 flex flex-col h-full" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
+    <div className="rounded-xl p-3 md:p-4 flex flex-col h-full min-h-0 overflow-hidden" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
       <div className="flex items-center gap-2 mb-3">
         <Activity className="w-4 h-4" style={{ color: "hsl(152, 75%, 50%)" }} />
         <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>
@@ -31,7 +31,7 @@ export default function AgentLog({ entries }: AgentLogProps) {
           <span className="text-xs">No activity recorded yet</span>
         </div>
       ) : (
-        <div className="overflow-y-auto flex-1 -mx-1 pr-2">
+        <div className="overflow-y-auto flex-1 min-h-0 -mx-1 pr-2">
           <div className="space-y-0.5">
             {sorted.map((entry, i) => {
               const cleanSummary = entry.summary

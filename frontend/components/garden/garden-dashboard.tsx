@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { RefreshCw, Sprout, Settings } from "lucide-react";
 import GardenConfig from "./garden-config";
 import { GardenDashboardData } from "@/lib/garden/types";
@@ -31,6 +31,15 @@ export default function GardenDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [liveUser, setLiveUser] = useState<string | undefined>();
   const [liveAgent, setLiveAgent] = useState<string | undefined>();
+  const leftColRef = useRef<HTMLDivElement>(null);
+  const [leftColHeight, setLeftColHeight] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!leftColRef.current) return;
+    const ro = new ResizeObserver(entries => setLeftColHeight(entries[0].contentRect.height));
+    ro.observe(leftColRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   const voice = useGardenVoice({
     onTurnComplete: async (user, agent) => {
@@ -149,7 +158,7 @@ export default function GardenDashboard() {
         {/* Row 1: Camera + Light Cycle side by side */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
           <CameraFeed url={data?.camera_url} timestamp={data?.camera_timestamp} photos={data?.photos || []} />
-          <LightTimeline schedule={schedule} readings={moisture?.readings} gardenConfig={data?.garden_config} />
+          <LightTimeline schedule={schedule} readings={moisture?.readings} gardenConfig={data?.garden_config} humidity={data?.humidifier?.current?.humidity} />
         </div>
 
         {/* Row 2: Sensor cards — 5 across (3 on mobile) */}
@@ -250,8 +259,8 @@ export default function GardenDashboard() {
         </div>
 
         {/* Middle row: Irrigation+Status+Pots | Agent Log */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4">
-          <div className="space-y-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4" style={{ alignItems: "start" }}>
+          <div className="space-y-2" ref={leftColRef}>
             <PotWeightTile
               config={data?.garden_config || null}
               scaleWeights={(() => {
@@ -288,7 +297,9 @@ export default function GardenDashboard() {
               liveAgent={liveAgent}
             />
           </div>
-          <AgentLog entries={data?.garden_log || []} />
+          <div style={{ height: leftColHeight ? `${leftColHeight}px` : "600px" }}>
+            <AgentLog entries={data?.garden_log || []} />
+          </div>
         </div>
 
         {/* Historical Charts */}

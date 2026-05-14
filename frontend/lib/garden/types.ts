@@ -134,6 +134,7 @@ export interface GrowthAssessment {
 
 export interface GardenConfig {
   description?: string;
+  notes?: Record<string, string>;
   pots?: PotConfig[];
   valve_flow_rates?: Record<string, ValveFlowRate>;
   updated_at?: string;

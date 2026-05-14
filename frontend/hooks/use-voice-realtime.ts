@@ -267,7 +267,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       // Get auth token from sessionStorage
       const token = typeof window !== 'undefined' ? sessionStorage.getItem('auth_token') : null;
       const headers: HeadersInit = { "Content-Type": "application/json" };
-      
+
       // Extract user_id from JWT token (required for /api/query authentication)
       let authenticatedUserId: string | null = null;
       if (token) {
@@ -279,7 +279,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           console.warn("[VoiceRealtime] Failed to decode JWT:", e);
         }
       }
-      
+
       if (!authenticatedUserId) {
         throw new Error("Not authenticated - please log in");
       }

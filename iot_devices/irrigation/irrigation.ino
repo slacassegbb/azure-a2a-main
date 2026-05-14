@@ -10,6 +10,8 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "HX711.h"
+#include <Wire.h>
+#include "Adafruit_seesaw.h"
 
 // ===========================
 // Wi-Fi
@@ -33,7 +35,8 @@ const char* AZURE_API_VERSION  = "2023-11-03";
 #define VALVE_A_PIN 5     // Relay CH2 — nitrogen valve
 #define VALVE_B_PIN 7     // Relay CH3 — phosphorus valve
 #define VALVE_C_PIN 8     // Relay CH4 — plain water valve
-#define MOISTURE_PIN 9
+#define SEESAW_SDA_PIN 10  // SeeSaw I2C SDA
+#define SEESAW_SCL_PIN 9   // SeeSaw I2C SCL (reusing old moisture pin)
 #define LIGHT_DIM_PIN 15  // PWM output to Mean Well XLG-100 DIM+ wire
 #define TEMP_PIN 6        // DS18B20 OneWire data pin
 #define WEIGHT_DT_PIN 17   // HX711 #1 data pin
@@ -158,6 +161,12 @@ unsigned long lastTempReadMs = 0;
 const unsigned long TEMP_READ_INTERVAL_MS = 30000;  // read every 30s
 
 WebServer server(80);
+
+// ===========================
+// Soil Moisture (Adafruit SeeSaw I2C)
+// ===========================
+Adafruit_seesaw soilSensor;
+bool seesawReady = false;
 
 // ===========================
 // Weight Scale (HX711)
@@ -769,7 +778,7 @@ void uploadMoistureData() {
   time_t now = time(nullptr);
   if (now < 1700000000) return;
 
-  int moisturePct = map(lastMoistureRaw, 40, 110, 0, 100);
+  int moisturePct = map(lastMoistureRaw, 347, 885, 0, 100);
   moisturePct = constrain(moisturePct, 0, 100);
 
   struct tm tmInfo;
@@ -815,6 +824,8 @@ void uploadMoistureData() {
               + ",\"temp_c\":"    + String(lastTempC, 1)
               + ",\"weight_g\":"  + String(lastWeightG, 1)
               + ",\"weight2_g\":" + String(lastWeight2G, 1)
+              + ",\"light\":"     + String(constrain(currentBrightness, 0, 100))
+              + ",\"fan\":"       + String(fanOn ? fanSpeed : 0)
               + ",\"timestamp\":\"" + String(isoBuf) + "\""
               + ",\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + "},\"readings\":[" + readings + "]}";
@@ -944,40 +955,18 @@ void readMoisture() {
   if (millis() - lastMoistureReadMs < MOISTURE_READ_INTERVAL_MS) return;
   lastMoistureReadMs = millis();
 
-  // Skip readings during irrigation — pump causes electrical noise
+  if (!seesawReady) {
+    Serial.println("[MOISTURE] SeeSaw not ready");
+    return;
+  }
+
+  // Skip readings during irrigation — pump noise can affect I2C
   if (isIrrigating) {
     Serial.println("[MOISTURE] Skipping read (irrigating)");
     return;
   }
 
-  // Re-init ADC before each read batch
-  analogSetPinAttenuation(MOISTURE_PIN, ADC_2_5db);
-  delay(10);
-
-  // Discard 20 readings to flush ADC
-  for (int i = 0; i < 20; i++) {
-    analogRead(MOISTURE_PIN);
-    delayMicroseconds(200);
-  }
-
-  // Take 50 rapid readings, discard zeros (WiFi noise)
-  long total = 0;
-  int validCount = 0;
-  for (int i = 0; i < 50; i++) {
-    int val = analogRead(MOISTURE_PIN);
-    if (val > 5) {  // ignore WiFi noise zeros
-      total += val;
-      validCount++;
-    }
-    delayMicroseconds(500);
-  }
-  int currentRaw = (validCount > 0) ? (total / validCount) : lastMoistureRaw;
-
-  // Reject extreme outliers (pump noise, ADC glitch)
-  if (currentRaw > 200) {
-    Serial.println("[MOISTURE] Outlier rejected: " + String(currentRaw));
-    return;
-  }
+  uint16_t currentRaw = soilSensor.touchRead(0);
 
   // Exponential moving average (alpha = 0.15 — heavy smoothing)
   if (!moistureInitialized) {
@@ -988,9 +977,10 @@ void readMoisture() {
   }
   lastMoistureRaw = (int)(smoothedMoisture + 0.5);
 
-  int pct = map(lastMoistureRaw, 40, 110, 0, 100);
+  // SeeSaw capacitive range: ~347 (bone dry) to ~885 (saturated)
+  int pct = map(lastMoistureRaw, 347, 885, 0, 100);
   pct = constrain(pct, 0, 100);
-  Serial.println("[MOISTURE] Raw: " + String(lastMoistureRaw) + "  (" + String(pct) + "%)");
+  Serial.println("[MOISTURE] SeeSaw raw: " + String(lastMoistureRaw) + "  (" + String(pct) + "%)");
 }
 
 void checkIrrigationTimer() {
@@ -1104,16 +1094,11 @@ void pollTareCommand() {
 
 void handleRoot()   { server.send(200, "text/html", htmlPage()); }
 void handleStatus() {
-  int moisturePct = map(lastMoistureRaw, 40, 110, 0, 100);
+  int moisturePct = map(lastMoistureRaw, 347, 885, 0, 100);
   moisturePct = constrain(moisturePct, 0, 100);
-  // Take a quick instantaneous reading for diagnostics
-  int instantRaw = 0;
-  for (int i = 0; i < 10; i++) { instantRaw += analogRead(MOISTURE_PIN); delayMicroseconds(200); }
-  instantRaw /= 10;
   String json = "{\"irrigating\":" + String(isIrrigating ? "true" : "false")
               + ",\"last_request_id\":\"" + lastRequestId + "\""
               + ",\"moisture_raw\":" + String(lastMoistureRaw)
-              + ",\"moisture_instant\":" + String(instantRaw)
               + ",\"moisture_pct\":" + String(moisturePct)
               + ",\"temp_c\":" + String(lastTempC, 1)
               + ",\"weight_g\":" + String(lastWeightG, 1)
@@ -1135,9 +1120,6 @@ void setup() {
   digitalWrite(VALVE_C_PIN, HIGH);
   pinMode(LIGHT_DIM_PIN, OUTPUT);
   analogWrite(LIGHT_DIM_PIN, 0);  // Start at full brightness (inverted: 0 = full)
-  // Don't set pinMode for ADC pin — analogRead handles it
-  analogSetPinAttenuation(MOISTURE_PIN, ADC_2_5db);  // 0-1.1V range
-  analogReadResolution(12);        // Force 12-bit (0-4095)
   relayOff();
 
   prefs.begin("irrigation", false);
@@ -1213,14 +1195,20 @@ void setup() {
   });
   server.begin();
 
-  lastLightRequestId = prefs.getString("lastLightReq", "");
-  Serial.println("Restored lastLightRequestId: " + (lastLightRequestId.length() ? lastLightRequestId : "(none)"));
-  lastFanRequestId = prefs.getString("lastFanReq", "");
-  Serial.println("Restored lastFanRequestId: " + (lastFanRequestId.length() ? lastFanRequestId : "(none)"));
+  // Don't restore lastLightRequestId — always reload schedule on boot
+  lastLightRequestId = "";
   lastValveRequestId = prefs.getString("lastValveReq", "");
-  Serial.println("Restored lastValveRequestId: " + (lastValveRequestId.length() ? lastValveRequestId : "(none)"));
   lastTareRequestId = prefs.getString("lastTareReq", "");
-  Serial.println("Restored lastTareRequestId: " + (lastTareRequestId.length() ? lastTareRequestId : "(none)"));
+  // Don't restore fan request ID — always re-apply fan state on boot
+  lastFanRequestId = "";
+
+  Wire.begin(SEESAW_SDA_PIN, SEESAW_SCL_PIN);
+  seesawReady = soilSensor.begin(0x36);
+  if (seesawReady) {
+    Serial.println("SeeSaw soil sensor ready on SDA=" + String(SEESAW_SDA_PIN) + " SCL=" + String(SEESAW_SCL_PIN));
+  } else {
+    Serial.println("[MOISTURE] SeeSaw not found — check wiring (SDA=" + String(SEESAW_SDA_PIN) + " SCL=" + String(SEESAW_SCL_PIN) + ")");
+  }
 
   tempSensor.begin();
   Serial.println("Temperature sensor on GPIO " + String(TEMP_PIN) + " — " + String(tempSensor.getDeviceCount()) + " device(s) found");
@@ -1265,7 +1253,7 @@ void setup() {
   } else {
     Serial.println("\n[WEIGHT] Scale2 not found — check wiring on GPIO " + String(WEIGHT2_SCK_PIN) + "/" + String(WEIGHT2_DT_PIN));
   }
-  Serial.println("Moisture sensor on GPIO " + String(MOISTURE_PIN));
+  Serial.println("Moisture sensor: SeeSaw I2C 0x36 (SDA=" + String(SEESAW_SDA_PIN) + " SCL=" + String(SEESAW_SCL_PIN) + ")");
   Serial.println("Kasa light: " + String(strlen(KASA_LIGHT_IP) ? KASA_LIGHT_IP : "(not configured)"));
   Serial.println("Kasa fan: " + String(KASA_FAN_IP));
   Serial.println("Polling: " + azureBlobUrl());

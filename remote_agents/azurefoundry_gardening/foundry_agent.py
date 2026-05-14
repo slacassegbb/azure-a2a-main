@@ -1113,19 +1113,19 @@ The user is replying via SMS to a question you previously asked. Do NOT run a fu
 Do nothing else.
 
 **Every run, do this (normal mode):**
-1. Take a photo, read sensors (weight, temp, humidity), read current light schedule
+1. Take a photo, read sensors (weight, temp, humidity, **top-soil moisture** via `get_moisture_data`), read current light schedule
 2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
 4. Call `update_growth_assessment` with what you visually observe — stage, estimated height %, brief notes. This feeds the dashboard and your own memory for next run. MANDATORY every run. If no green growth is visible above the soil, report height_pct=0 — do NOT guess or assume emergence.
 5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
-6. **IRRIGATION DECISION**: Examine BOTH the soil surface AND weight data. For seeds/germination, pay special attention to surface dryness (look closely at the top soil color and texture) — seeds need surface moisture even when deep soil has water. For established plants, weight-based watering is usually sufficient. Trust your gardening expertise.
+6. **IRRIGATION DECISION**: Call `get_moisture_data` EVERY RUN. The moisture sensor measures TOP SOIL only (shallow capacitive I2C sensor). Irrigate if ANY of these are true: (a) pot weight drops below ~20% of calibrated range, (b) top soil moisture drops below ~20% for any growth stage, (c) top soil moisture drops below ~35% during germination or seedling stage. Top soil drying out matters at ALL stages — even if weight looks ok, dry surface means the plant needs water.
 7. Report what you did and what you observed
 
 A run where you skip calling the three control tools is a FAILED run.
 
 ## Capabilities
 - **Garden Health Analysis**: Analyze camera images for plant health, growth stage, pest issues, disease signs.
-- **Irrigation Control**: Trigger IoT irrigation valves. Base watering on pot WEIGHT (not moisture sensor — it's unreliable). Check `get_pot_config` for calibrated dry/wet weights. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
+- **Irrigation Control**: Trigger IoT irrigation valves. Primary signal: pot WEIGHT (check `get_pot_config` for calibrated dry/wet weights). Secondary signal: top-soil moisture % from `get_moisture_data` (SeeSaw I2C capacitive sensor — reliable). For germination/seedling stages, moisture % is equally important as weight. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
 - **Pot Weight Monitoring (PRIMARY)**: Two scales (`weight_g` = scale_1, `weight2_g` = scale_2). Each pot has calibrated dry/wet weights. Water when the driest pot drops below ~20%. Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
 - **Grow Light Control**: Adjust the autonomous light schedule (sunrise/sunset times, ramp durations, peak brightness). Lights run on the IoT device even without internet.
 - **Fan Control**: On/off for air circulation, humidity/temp control. Can auto-off after a duration.
@@ -1140,7 +1140,7 @@ A run where you skip calling the three control tools is a FAILED run.
 - **TRUST THE IMAGE, NOT THE LOG**: The garden activity log shows HISTORICAL data that may be outdated. The user may have changed their setup entirely. ALWAYS describe what you ACTUALLY SEE in the current image. If the image shows empty pots with no plants, say that — do NOT hallucinate plants just because the log mentions them. The image is ground truth.
 - If you see potential problems, explain them clearly but don't be alarmist
 - **ALWAYS end with a "🌱 Recommendations" section** — this is MANDATORY, never skip it. List 2-3 actionable bullet points of things you CANNOT do automatically that the user should handle manually. Pick tips relevant to what you actually observe.
-- **Asking questions**: If the Garden Profile is missing essential info (plant types, growth stage, soil mix, growing goals, nutrient schedule, or pot contents), end your response with a "❓ Questions" section containing 1 question to fill in the most important gap. This is how you build up knowledge over time. Once the basics are covered, only ask if something in the image genuinely confuses you (new growth vs damage, unexpected changes, etc.). When they answer, save it with `save_garden_note` so you remember next time. Don't ask if it's already in the Garden Profile.
+- **Asking questions**: If the Garden Profile is missing essential info (plant types, growing goals, soil mix, nutrient schedule, or pot contents), end your response with a "❓ Questions" section containing 1 question to fill in the most important gap. This is how you build up knowledge over time. Once the basics are covered, only ask if something in the image genuinely confuses you. When they answer, save it with `save_garden_note` so you remember next time. **IMPORTANT: Never ask about something already in the Garden Profile.** The key `plants` OR `seeds` both mean the plant type is known — if either is present, do NOT ask what they're growing. Always use `plants` as the key when saving plant type info.
 - **Night-time awareness**: The camera has no night vision. If it is currently nighttime (roughly 8 PM – 7 AM Eastern), snapshots will be completely dark. Do NOT retry taking photos when it's dark — instead, tell the user the image is dark because it's nighttime and suggest they try again during daylight hours or turn on a grow light first.
 
 Current date/time: {datetime.datetime.now().astimezone().isoformat()}
@@ -1151,7 +1151,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "irrigate_garden",
-            "description": "Trigger the IoT irrigation system to water the garden. Only call this when the user explicitly asks to water/irrigate. Default duration is 120 seconds (2 minutes). Do NOT call this for questions about watering schedules or if plants need water. IMPORTANT: Only call this tool ONCE per user request.",
+            "description": "Trigger the IoT irrigation system to water the garden. Call this autonomously when any pot drops below ~20% water level based on calibrated weight, OR when the user explicitly asks to water. Default duration is 120 seconds (2 minutes). IMPORTANT: Only call this tool ONCE per irrigation event.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1195,7 +1195,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "get_moisture_data",
-            "description": "Read the soil moisture sensor data and air temperature from the IoT device. Returns the current moisture percentage, temperature in Celsius, and recent history (up to 48 hours). Call this when the user asks about soil moisture, temperature, whether they should water, or moisture/temperature trends.",
+            "description": "Read the top-soil moisture sensor data and air temperature from the IoT device. Uses a SeeSaw I2C capacitive sensor — measures surface/top soil only, not deep moisture. Returns the current moisture percentage (0=bone dry, 100=saturated), temperature in Celsius, and recent history (up to 48 hours). Call this every autonomous run and when the user asks about soil moisture, temperature, or watering.",
             "parameters": {
                 "type": "object",
                 "properties": {},

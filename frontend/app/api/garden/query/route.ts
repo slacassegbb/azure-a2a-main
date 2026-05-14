@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
         session_id: "user_3",
         enable_routing: true,
         timeout: 600,
+        activated_agents: ["Home Gardening Agent"],
       }),
     });
     const data = await queryRes.json();

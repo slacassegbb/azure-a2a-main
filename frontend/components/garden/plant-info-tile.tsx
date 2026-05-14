@@ -1,6 +1,6 @@
 "use client";
 
-import { Sprout, BarChart2, FileText } from "lucide-react";
+import { Sprout, BarChart2, Leaf, Calendar, FlaskConical, Droplets, Target, BookOpen } from "lucide-react";
 import { GardenConfig, GrowthAssessment } from "@/lib/garden/types";
 
 const STAGE_LABELS: Record<GrowthAssessment["stage"], string> = {
@@ -21,16 +21,38 @@ const STAGE_COLOR: Record<GrowthAssessment["stage"], string> = {
   harvest: "hsl(48, 95%, 55%)",
 };
 
+// Internal keys that shouldn't be shown to the user
+const HIDDEN_KEYS = new Set(["pending_question_cleared"]);
+
+// Human-readable labels + icons for known note keys
+const NOTE_META: Record<string, { label: string; icon: React.ElementType }> = {
+  seeds:        { label: "Seeds / Plants", icon: Leaf },
+  plants:       { label: "Seeds / Plants", icon: Leaf },
+  soil_mix:     { label: "Soil Mix",       icon: FlaskConical },
+  pot_size:     { label: "Pot Size",       icon: Droplets },
+  grow_goal:    { label: "Goal",           icon: Target },
+  experience:   { label: "Experience",     icon: BookOpen },
+  location:     { label: "Location",       icon: BookOpen },
+  nutrients:    { label: "Nutrients",      icon: FlaskConical },
+  planted_at:   { label: "Planted",        icon: Calendar },
+  planting_date:{ label: "Planted",        icon: Calendar },
+};
+
+function formatNoteKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
 interface Props {
   config: GardenConfig | null;
 }
 
 export default function PlantInfoTile({ config }: Props) {
-  const plants = config?.plants;
   const growth = config?.growth_assessment;
-  const description = config?.description;
+  const notes = config?.notes ?? {};
 
-  const hasAnyInfo = plants || growth || description;
+  // Filter out hidden internal keys
+  const visibleNotes = Object.entries(notes).filter(([k]) => !HIDDEN_KEYS.has(k));
+  const hasAnyInfo = visibleNotes.length > 0 || growth;
 
   return (
     <div
@@ -45,16 +67,6 @@ export default function PlantInfoTile({ config }: Props) {
         <p className="text-[11px]" style={{ color: "hsl(220, 10%, 40%)" }}>
           No info yet — agent will learn as it monitors the garden.
         </p>
-      )}
-
-      {plants && (
-        <div className="flex items-start gap-2">
-          <Sprout className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "hsl(140, 60%, 50%)" }} />
-          <div>
-            <p className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: "hsl(220, 10%, 40%)" }}>Growing</p>
-            <p className="text-xs font-medium text-white">{plants}</p>
-          </div>
-        </div>
       )}
 
       {growth && growth.stage !== "empty" && (
@@ -81,14 +93,25 @@ export default function PlantInfoTile({ config }: Props) {
         </div>
       )}
 
-      {description && (
-        <div className="flex items-start gap-2">
-          <FileText className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "hsl(220, 10%, 45%)" }} />
-          <div>
-            <p className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: "hsl(220, 10%, 40%)" }}>Description</p>
-            <p className="text-[10px] leading-relaxed" style={{ color: "hsl(220, 10%, 55%)" }}>{description}</p>
+      {visibleNotes.map(([key, value]) => {
+        const meta = NOTE_META[key];
+        const Icon = meta?.icon ?? Sprout;
+        const label = meta?.label ?? formatNoteKey(key);
+        return (
+          <div key={key} className="flex items-start gap-2">
+            <Icon className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "hsl(152, 60%, 45%)" }} />
+            <div>
+              <p className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: "hsl(220, 10%, 40%)" }}>{label}</p>
+              <p className="text-xs leading-relaxed" style={{ color: "hsl(220, 10%, 70%)" }}>{value}</p>
+            </div>
           </div>
-        </div>
+        );
+      })}
+
+      {config?.updated_at && (
+        <p className="text-[9px]" style={{ color: "hsl(220, 10%, 30%)" }}>
+          Last updated {new Date(config.updated_at).toLocaleDateString()}
+        </p>
       )}
     </div>
   );

@@ -8,6 +8,7 @@ interface LightTimelineProps {
   schedule: LightSchedule | null | undefined;
   readings?: MoistureReading[];
   gardenConfig?: GardenConfig | null;
+  humidity?: number | null;
 }
 
 // ── Sky multi-stop gradients (Rayleigh-inspired) ───────────────────────────
@@ -52,10 +53,15 @@ const HAZE_OPC: Record<string, number> = {
 };
 
 // ── Mountain colours per phase ─────────────────────────────────────────────
-const MTN_FAR: Record<string, string>  = { night: "#10102a", sunrise: "#1e1438", day: "#6888a4", sunset: "#1c1038" };
-const MTN_MID: Record<string, string>  = { night: "#0b130b", sunrise: "#111e11", day: "#3e6430", sunset: "#0e160e" };
-const MTN_NEAR: Record<string, string> = { night: "#080d08", sunrise: "#0c160c", day: "#2e5420", sunset: "#0a120a" };
-const PINE_COL: Record<string, string> = { night: "#030703", sunrise: "#070d07", day: "#1e4210", sunset: "#050905" };
+const MTN_FAR: Record<string, string>  = { night: "#1a1a3a", sunrise: "#2a1c4a", day: "#7a9aba", sunset: "#261440" };
+const MTN_MID: Record<string, string>  = { night: "#141f14", sunrise: "#1a2e1a", day: "#4e7840", sunset: "#161e16" };
+const MTN_NEAR: Record<string, string> = { night: "#111811", sunrise: "#162216", day: "#3c6e2c", sunset: "#131813" };
+const PINE_COL: Record<string, string> = { night: "#0a1209", sunrise: "#0e1a0c", day: "#2a5c18", sunset: "#0c1409" };
+
+// ── Mist RGB per phase ─────────────────────────────────────────────────────
+const MIST_RGB: Record<string, string> = {
+  day: "218,234,255", night: "138,158,218", sunrise: "218,175,200", sunset: "210,152,182",
+};
 
 // ── Mountain peak tables ───────────────────────────────────────────────────
 // [x_fraction_of_W,  y_fraction_of_maxH]
@@ -106,7 +112,7 @@ function getMtnY(peaks: [number, number][], fx: number, GNDLINE: number, maxH: n
   return GNDLINE - (y1 + t * (y2 - y1)) * maxH;
 }
 
-export default function LightTimeline({ schedule, readings = [], gardenConfig }: LightTimelineProps) {
+export default function LightTimeline({ schedule, readings = [], gardenConfig, humidity }: LightTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -131,7 +137,32 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
     const update = () => {
       const p = getDayProgress();
       setProgress(p);
-      if (videoRef.current) videoRef.current.currentTime = p * 8.0;
+      if (videoRef.current && schedule) {
+        // Video: 0s=dawn, 1s=morning, 3s=afternoon, 3.5s=pre-sunset, 4.5s=dusk, 6-8s=deep night
+        const sunriseStart   = (schedule.sunrise_hour ?? 5) / 24;
+        const sunriseEnd     = sunriseStart + (schedule.sunrise_ramp_min ?? 90) / 60 / 24;
+        const sunsetStart    = (schedule.sunset_hour ?? 20) / 24;
+        const sunsetEnd      = sunsetStart + (schedule.sunset_ramp_min ?? 90) / 60 / 24;
+        const nightLen       = 1 - (sunsetEnd - sunriseStart);
+        let vt: number;
+        if (p >= sunriseStart && p < sunriseEnd) {
+          // Sunrise ramp: dawn → morning (0s–1s)
+          vt = ((p - sunriseStart) / (sunriseEnd - sunriseStart)) * 1.0;
+        } else if (p >= sunriseEnd && p < sunsetStart) {
+          // Full daytime: morning → afternoon (1s–3.5s)
+          vt = 1.0 + ((p - sunriseEnd) / (sunsetStart - sunriseEnd)) * 2.5;
+        } else if (p >= sunsetStart && p < sunsetEnd) {
+          // Sunset ramp: golden hour → early night (3.5s–6.5s)
+          vt = 3.5 + ((p - sunsetStart) / (sunsetEnd - sunsetStart)) * 3.0;
+        } else {
+          // Night: early night → deep night/Milky Way (6.5s–8s)
+          const np = p >= sunsetEnd ? (p - sunsetEnd) / nightLen : (p + 1 - sunsetEnd) / nightLen;
+          vt = 6.5 + np * 1.5;
+        }
+        videoRef.current.currentTime = Math.min(7.99, vt);
+      } else if (videoRef.current) {
+        videoRef.current.currentTime = 6.0; // default to night
+      }
       if (schedule) {
         setBrightness(getCurrentBrightness(schedule));
         setPhase(getLightPhase(schedule));
@@ -219,7 +250,8 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   const arcMidX   = (arcStartX + arcEndX) / 2;
 
   const sunX = arcStartX + dayProg * arcSpanX;
-  const sunY = GNDLINE - (brightness / 100) * ARC_H;
+  // Sun Y follows the arc based on time (parabola), brightness only affects glow
+  const sunY = GNDLINE - 4 * ARC_H * dayProg * (1 - dayProg);
 
   const nightDuration = (1 - sunsetEndFrac) + sunriseFrac;
   const nightProg = !isDaytime
@@ -253,8 +285,8 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   // Growth stage from agent
   const growthStage = gardenConfig?.growth_assessment?.stage ?? "germination";
   const growthFrac  = gardenConfig?.growth_assessment
-    ? Math.max(0.06, gardenConfig.growth_assessment.height_pct / 100)
-    : 0.06;
+    ? gardenConfig.growth_assessment.height_pct / 100
+    : 0;
 
   // Garden plant colours
   const leafCol  = isDay ? "#40a832" : isNight ? "#193e0c" : "#2d8020";
@@ -280,6 +312,16 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   const fanSpeed = latestReading?.fan ?? 0;
   const windSwayDeg = fanSpeed * 0.07; // max ~7° at 100%
   const windDur = fanSpeed > 3 ? Math.max(0.6, 2.8 - fanSpeed * 0.022) : 0;
+
+  // Mist parameters driven by humidity & fan speed
+  const soilPct = latestReading?.pct ?? null;
+  const mistOpacity = humidity == null ? 0
+    : Math.min(0.40, Math.max(0, (humidity - 30) / 70 * 0.32 + (soilPct != null ? soilPct / 100 * 0.12 : 0)));
+  const mistDriftDur = fanSpeed > 3 ? Math.max(3, 12 - fanSpeed * 0.09) : 14;
+  const mistAmp = W * (0.08 + fanSpeed * 0.0014);  // grows with fan speed
+  const mistH = GNDLINE * 0.13;
+  const mistRgb = MIST_RGB[phase];
+
   const potWaterPcts: (number | null)[] = POT_XS.map((_, i) => {
     const pot = gardenConfig?.pots?.[i];
     if (!pot || pot.dry_weight_g == null || pot.wet_weight_g == null || pot.wet_weight_g <= pot.dry_weight_g) return null;
@@ -382,6 +424,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
   };
 
   const renderPlant = (cx: number, idx: number) => {
+    if (growthFrac === 0 && growthStage !== "germination") return null;
     const baseY = potY - potH * 0.05; // soil surface
 
     switch (growthStage) {
@@ -585,6 +628,11 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           <filter id="ct-softshadow">
             <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.3" />
           </filter>
+          <linearGradient id="ct-mist-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor={`rgb(${mistRgb})`} stopOpacity={0} />
+            <stop offset="50%"  stopColor={`rgb(${mistRgb})`} stopOpacity={0.45} />
+            <stop offset="100%" stopColor={`rgb(${mistRgb})`} stopOpacity={0.82} />
+          </linearGradient>
         </defs>
 
         {/* ── Celestial arcs (behind mountains) ── */}
@@ -634,38 +682,16 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           );
         })()}
 
-        {/* ── Mid mountain range ── */}
-        <path d={midPath} fill={MTN_MID[phase]} opacity={0.96} />
-
-        {/* ── Near mountain range ── */}
-        <path d={nearPath} fill={MTN_NEAR[phase]} />
-
-        {/* ── Pine trees on near mountain slopes ── */}
-        {PINE_XS.map((fx, i) => {
-          const px  = fx * W;
-          const baseY = getMtnY(NEAR_PEAKS, fx, GNDLINE, NEAR_MAX);
-          const ph  = Math.max(16, NEAR_MAX * 0.48 * (0.7 + (i % 3) * 0.22));
-          return renderPine(px, baseY, ph, PINE_COL[phase], i, i);
-        })}
-
-        {/* ── Brightness overlay ── */}
-        {isDaytime && brightness < 98 && (
-          <rect width={W} height={GNDLINE} fill="#0b0c2a"
-            opacity={(1 - brightness / 100) * 0.82}
-            style={{ pointerEvents: "none" }} />
-        )}
-
-
-        {/* ── Sun ── */}
+        {/* ── Sun (behind mountains) ── */}
         {isDaytime && (() => {
           const brightFrac = brightness / 100;
-          const r    = Math.max(10, W * 0.038) * (0.5 + 0.5 * brightFrac);
-          const glowR  = r * 2.8;
+          const r    = Math.max(6, W * 0.038) * (0.25 + 0.75 * brightFrac);
+          const glowR  = r * (1.5 + 1.5 * brightFrac);
           const rayLen = r * 0.7;
           const rayGap = r * 1.25;
           const sunColor = brightness > 50 ? "#FFD700" : `hsl(48,${40 + 55 * brightFrac}%,${50 + 20 * brightFrac}%)`;
           return (
-            <g filter="url(#ct-glow)" opacity={0.4 + 0.6 * brightFrac}>
+            <g filter="url(#ct-glow)" opacity={0.2 + 0.8 * brightFrac}>
               <circle cx={sunX} cy={sunY} r={glowR} fill="url(#ct-sunhalo)">
                 <animate attributeName="r" values={`${glowR};${glowR * 1.15};${glowR}`} dur="3s" repeatCount="indefinite" />
               </circle>
@@ -691,7 +717,7 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
           );
         })()}
 
-        {/* ── Moon ── */}
+        {/* ── Moon (behind mountains) ── */}
         {!isDaytime && (() => {
           const mr = Math.max(14, W * 0.026);
           return (
@@ -704,6 +730,20 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             </g>
           );
         })()}
+
+        {/* ── Mid mountain range ── */}
+        <path d={midPath} fill={MTN_MID[phase]} opacity={0.96} />
+
+        {/* ── Near mountain range ── */}
+        <path d={nearPath} fill={MTN_NEAR[phase]} />
+
+        {/* ── Pine trees on near mountain slopes ── */}
+        {PINE_XS.map((fx, i) => {
+          const px  = fx * W;
+          const baseY = getMtnY(NEAR_PEAKS, fx, GNDLINE, NEAR_MAX);
+          const ph  = Math.max(16, NEAR_MAX * 0.48 * (0.7 + (i % 3) * 0.22));
+          return renderPine(px, baseY, ph, PINE_COL[phase], i, i);
+        })}
 
         {(() => {
           const edge = `M 0,${GNDLINE}
@@ -731,6 +771,29 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
             </>
           );
         })()}
+
+        {/* ── Ground mist (hugs the terrain line, driven by humidity + soil moisture) ── */}
+        {mistOpacity > 0 && (
+          <g style={{ pointerEvents: "none" }}>
+            <rect x={-W * 0.6} y={GNDLINE - mistH} width={W * 2.2} height={mistH + 2}
+              fill="url(#ct-mist-grad)" opacity={mistOpacity}>
+              <animateTransform attributeName="transform" type="translate"
+                values={`0 0; ${mistAmp} 0; 0 0; ${-mistAmp * 0.7} 0; 0 0`}
+                dur={`${mistDriftDur}s`} repeatCount="indefinite"
+                calcMode="spline"
+                keySplines="0.45 0 0.55 1; 0.45 0 0.55 1; 0.45 0 0.55 1; 0.45 0 0.55 1" />
+            </rect>
+            {/* Second mist layer, slower and slightly offset for depth */}
+            <rect x={-W * 0.6} y={GNDLINE - mistH * 0.6} width={W * 2.2} height={mistH * 0.65 + 2}
+              fill="url(#ct-mist-grad)" opacity={mistOpacity * 0.55}>
+              <animateTransform attributeName="transform" type="translate"
+                values={`0 0; ${-mistAmp * 0.65} 0; 0 0; ${mistAmp * 0.5} 0; 0 0`}
+                dur={`${mistDriftDur * 1.4}s`} repeatCount="indefinite"
+                calcMode="spline"
+                keySplines="0.45 0 0.55 1; 0.45 0 0.55 1; 0.45 0 0.55 1; 0.45 0 0.55 1" />
+            </rect>
+          </g>
+        )}
 
         {/* ── Garden pots & plants ── */}
         {POT_XS.map((cx, i) => (
@@ -797,8 +860,6 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig }:
         })()}
 
         {/* ── 12 PM label ── */}
-        <text x={W / 2} y={H - 6} textAnchor="middle" fontSize={labelFS}
-          fill="rgba(255,255,255,0.25)" fontFamily="sans-serif">12 PM</text>
 
 
       </svg>
