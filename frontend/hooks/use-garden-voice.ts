@@ -53,6 +53,7 @@ export function useGardenVoice(config: GardenVoiceConfig = {}): GardenVoiceHook 
   const lastTranscriptRef = useRef("");
   const isResponseActiveRef = useRef(false);
   const announcedAgentsRef = useRef<Set<string>>(new Set());
+  const intentionalCloseRef = useRef(false);
 
   const sendEvent = useCallback((event: object) => {
     if (dcRef.current?.readyState === "open") {
@@ -266,6 +267,7 @@ export function useGardenVoice(config: GardenVoiceConfig = {}): GardenVoiceHook 
 
   const startConversation = useCallback(async () => {
     try {
+      intentionalCloseRef.current = false;
       setError(null);
       setTranscript("");
       setResult("");
@@ -335,7 +337,7 @@ export function useGardenVoice(config: GardenVoiceConfig = {}): GardenVoiceHook 
 
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-        if (state === "failed" || state === "disconnected") {
+        if ((state === "failed" || state === "disconnected") && !intentionalCloseRef.current) {
           setError("Voice connection lost");
           setIsConnected(false);
           setIsListening(false);
@@ -364,6 +366,7 @@ export function useGardenVoice(config: GardenVoiceConfig = {}): GardenVoiceHook 
   }, [handleMessage, connectBackendWebSocket]);
 
   const stopConversation = useCallback(() => {
+    intentionalCloseRef.current = true;
     dcRef.current?.close();
     dcRef.current = null;
     pcRef.current?.close();
