@@ -32,6 +32,7 @@ export default function GardenDashboard() {
   const [liveAgent, setLiveAgent] = useState<string | undefined>();
   const leftColRef = useRef<HTMLDivElement>(null);
   const [leftColHeight, setLeftColHeight] = useState<number | undefined>(undefined);
+  const prevVoiceLogLen = useRef(0);
 
   useEffect(() => {
     if (!leftColRef.current) return;
@@ -39,6 +40,16 @@ export default function GardenDashboard() {
     ro.observe(leftColRef.current);
     return () => ro.disconnect();
   }, []);
+
+  // Clear live voice state once the entry is persisted and appears in fetched data
+  useEffect(() => {
+    const len = data?.voice_log?.length ?? 0;
+    if (len > prevVoiceLogLen.current) {
+      setLiveUser(undefined);
+      setLiveAgent(undefined);
+    }
+    prevVoiceLogLen.current = len;
+  }, [data?.voice_log?.length]);
 
   const voice = useGardenVoice({
     onTurnComplete: async (user, agent) => {
