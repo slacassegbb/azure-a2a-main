@@ -1112,12 +1112,7 @@ The user is replying via SMS to a question you previously asked. Do NOT run a fu
 4. Reply with a friendly short confirmation, e.g. "Got it, I've noted you're growing basil! 🌿 I'll use this to tailor your garden care."
 Do nothing else.
 
-**If the message is a conversational query from a user** (not a scheduled garden check):
-- You MAY call read/observation tools freely: `capture_fresh_photo`, `get_moisture_data`, `get_light_schedule`, `get_pot_config`, `get_humidifier_status`
-- Do NOT call control tools (`control_fan`, `control_lights`, `control_humidifier`, `irrigate_garden`, `irrigate_with_valve`) unless the user explicitly asks to CHANGE something (e.g. "turn the fan up", "set humidity to 60%", "water the plants now")
-- Answer directly and conversationally — no need for a full report
-
-**Every scheduled garden check run, do this (normal mode):**
+**Every run, do this (normal mode):**
 1. Take a photo, read sensors (weight, temp, humidity, **top-soil moisture** via `get_moisture_data`), read current light schedule
 2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
