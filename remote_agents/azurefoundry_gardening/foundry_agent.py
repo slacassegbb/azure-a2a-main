@@ -1250,7 +1250,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_fan",
-            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Match speed to growth stage: germination=10-20% (minimal disturbance), seedling=20-40% (gentle), vegetative=50-80% (good airflow), flowering=60-100% (strong). Call this proactively based on growth stage — you do NOT need the user to ask.",
+            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Use for ventilation, humidity control, cooling, or preventing mold. Call this proactively based on growth stage — you do NOT need the user to ask.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1260,7 +1260,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     },
                     "speed": {
                         "type": "integer",
-                        "description": "Fan speed 1-100%. Choose based on growth stage: germination=10-20%, seedling=20-40%, vegetative=50-80%, flowering=60-100%. Do NOT default to 100 unless the plant is in flowering/fruiting stage.",
+                        "description": "Fan speed 1-100%. Choose based on current sensor data, growth stage, temperature, and humidity — reason about what the plants actually need right now.",
                     },
                     "duration_min": {
                         "type": "integer",
