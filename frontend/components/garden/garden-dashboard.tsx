@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { RefreshCw, Sprout, Settings } from "lucide-react";
 import GardenConfig from "./garden-config";
 import { GardenDashboardData } from "@/lib/garden/types";
@@ -30,6 +30,15 @@ export default function GardenDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [liveUser, setLiveUser] = useState<string | undefined>();
   const [liveAgent, setLiveAgent] = useState<string | undefined>();
+  const leftColRef = useRef<HTMLDivElement>(null);
+  const [leftColHeight, setLeftColHeight] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!leftColRef.current) return;
+    const ro = new ResizeObserver(entries => setLeftColHeight(entries[0].contentRect.height));
+    ro.observe(leftColRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   const voice = useGardenVoice({
     onTurnComplete: async (user, agent) => {
@@ -234,7 +243,7 @@ export default function GardenDashboard() {
 
         {/* Middle row: Irrigation+Status+Pots | Chat + Agent Log */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4" style={{ alignItems: "start" }}>
-          <div className="space-y-2">
+          <div className="space-y-2" ref={leftColRef}>
             <PotWeightTile
               config={data?.garden_config || null}
               scaleWeights={(() => {
@@ -266,7 +275,7 @@ export default function GardenDashboard() {
             </div>
             <PlantInfoTile config={data?.garden_config || null} />
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2" style={{ height: leftColHeight ? `${leftColHeight}px` : undefined }}>
             <VoiceConversationTile
               entries={data?.voice_log || []}
               liveUser={voice.isVoiceProcessing ? (voice.transcript || "...") : liveUser}
