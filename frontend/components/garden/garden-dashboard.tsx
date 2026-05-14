@@ -269,8 +269,8 @@ export default function GardenDashboard() {
           <div className="flex flex-col gap-2">
             <VoiceConversationTile
               entries={data?.voice_log || []}
-              liveUser={liveUser}
-              liveAgent={liveAgent}
+              liveUser={voice.isVoiceProcessing ? (voice.transcript || "...") : liveUser}
+              liveAgent={voice.isVoiceProcessing ? "..." : liveAgent}
               isConnected={voice.isConnected}
               isListening={voice.isListening}
               isSpeaking={voice.isSpeaking}
