@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { RefreshCw, Sprout, Settings } from "lucide-react";
 import GardenConfig from "./garden-config";
 import { GardenDashboardData } from "@/lib/garden/types";
@@ -18,7 +18,6 @@ import LastAction from "./last-action";
 import EnvironmentChart from "./environment-chart";
 import PotWeightTile from "./pot-weight-tile";
 import PlantInfoTile from "./plant-info-tile";
-import GardenVoiceButton from "./garden-voice-button";
 import VoiceConversationTile from "./voice-conversation-tile";
 import { useGardenVoice } from "@/hooks/use-garden-voice";
 // PhotoTimeline is now integrated into CameraFeed
@@ -31,15 +30,6 @@ export default function GardenDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [liveUser, setLiveUser] = useState<string | undefined>();
   const [liveAgent, setLiveAgent] = useState<string | undefined>();
-  const leftColRef = useRef<HTMLDivElement>(null);
-  const [leftColHeight, setLeftColHeight] = useState<number | undefined>(undefined);
-
-  useEffect(() => {
-    if (!leftColRef.current) return;
-    const ro = new ResizeObserver(entries => setLeftColHeight(entries[0].contentRect.height));
-    ro.observe(leftColRef.current);
-    return () => ro.disconnect();
-  }, []);
 
   const voice = useGardenVoice({
     onTurnComplete: async (user, agent) => {
@@ -119,22 +109,6 @@ export default function GardenDashboard() {
 
           {/* Spacer */}
           <div className="flex-1" />
-
-          {/* Voice button */}
-          <GardenVoiceButton
-            isConnected={voice.isConnected}
-            isListening={voice.isListening}
-            isSpeaking={voice.isSpeaking}
-            isProcessing={voice.isProcessing}
-            isTalking={voice.isTalking}
-            isVoiceProcessing={voice.isVoiceProcessing}
-            currentAgent={voice.currentAgent}
-            error={voice.error}
-            onStart={voice.startConversation}
-            onTalk={voice.startTalking}
-            onStopTalk={voice.stopTalking}
-            onStop={() => { voice.stopConversation(); setLiveUser(undefined); setLiveAgent(undefined); }}
-          />
 
           {/* Status + refresh — right */}
           <div className="flex items-center gap-2 shrink-0">
@@ -258,9 +232,9 @@ export default function GardenDashboard() {
           />
         </div>
 
-        {/* Middle row: Irrigation+Status+Pots | Agent Log */}
+        {/* Middle row: Irrigation+Status+Pots | Chat + Agent Log */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4" style={{ alignItems: "start" }}>
-          <div className="space-y-2" ref={leftColRef}>
+          <div className="space-y-2">
             <PotWeightTile
               config={data?.garden_config || null}
               scaleWeights={(() => {
@@ -291,14 +265,29 @@ export default function GardenDashboard() {
               <LastAction log={data?.garden_log || []} />
             </div>
             <PlantInfoTile config={data?.garden_config || null} />
+          </div>
+          <div className="flex flex-col gap-2">
             <VoiceConversationTile
               entries={data?.voice_log || []}
               liveUser={liveUser}
               liveAgent={liveAgent}
+              isConnected={voice.isConnected}
+              isListening={voice.isListening}
+              isSpeaking={voice.isSpeaking}
+              isProcessing={voice.isProcessing}
+              isTalking={voice.isTalking}
+              isVoiceProcessing={voice.isVoiceProcessing}
+              currentAgent={voice.currentAgent}
+              voiceError={voice.error}
+              onStartVoice={voice.startConversation}
+              onTalk={voice.startTalking}
+              onStopTalk={voice.stopTalking}
+              onStopVoice={() => { voice.stopConversation(); setLiveUser(undefined); setLiveAgent(undefined); }}
+              onTextSent={(user, agent) => { setLiveUser(user); setLiveAgent(agent); setTimeout(fetchData, 1000); }}
             />
-          </div>
-          <div style={{ height: leftColHeight ? `${leftColHeight}px` : "600px" }}>
-            <AgentLog entries={data?.garden_log || []} />
+            <div className="flex-1 min-h-0" style={{ minHeight: "300px" }}>
+              <AgentLog entries={data?.garden_log || []} />
+            </div>
           </div>
         </div>
 
