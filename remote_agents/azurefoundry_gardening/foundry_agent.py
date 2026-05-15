@@ -426,10 +426,12 @@ class FoundryGardeningAgent:
         if not current:
             current = dict(DEFAULT_LIGHT_SCHEDULE)
 
-        # Merge — only update provided params
+        # Merge — only update provided params (ramps are always fixed at 30 min)
         for key in DEFAULT_LIGHT_SCHEDULE:
             if key in params:
                 current[key] = params[key]
+        current["sunrise_ramp_min"] = 30
+        current["sunset_ramp_min"] = 30
 
         # Write with new request_id
         request_id = uuid.uuid4().hex[:8]
@@ -1224,10 +1226,6 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                         "type": "integer",
                         "description": "Hour (0-23) for sunrise to begin.",
                     },
-                    "sunrise_ramp_min": {
-                        "type": "integer",
-                        "description": "Minutes to ramp from night to peak brightness.",
-                    },
                     "peak_brightness": {
                         "type": "integer",
                         "description": "Maximum brightness 1-100 during daytime.",
@@ -1235,10 +1233,6 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     "sunset_hour": {
                         "type": "integer",
                         "description": "Hour (0-23) for sunset to begin.",
-                    },
-                    "sunset_ramp_min": {
-                        "type": "integer",
-                        "description": "Minutes to ramp from peak to night brightness.",
                     },
                     "night_brightness": {
                         "type": "integer",
