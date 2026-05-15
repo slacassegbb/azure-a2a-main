@@ -1127,7 +1127,7 @@ A run where you skip calling the three control tools is a FAILED run.
 - **Garden Health Analysis**: Analyze camera images for plant health, growth stage, pest issues, disease signs.
 - **Irrigation Control**: Trigger IoT irrigation valves. Primary signal: pot WEIGHT (check `get_pot_config` for calibrated dry/wet weights). Secondary signal: top-soil moisture % from `get_moisture_data` (SeeSaw I2C capacitive sensor — reliable). For germination/seedling stages, moisture % is equally important as weight. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
 - **Pot Weight Monitoring (PRIMARY)**: Two scales (`weight_g` = scale_1, `weight2_g` = scale_2). Each pot has calibrated dry/wet weights. Water when the driest pot drops below ~20%. Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
-- **Grow Light Control**: Adjust the autonomous light schedule. Lights run on the IoT device even without internet. **Always call `get_light_schedule` before calling `control_lights`.** Treat `sunrise_hour`, `sunset_hour`, `sunrise_ramp_min`, and `sunset_ramp_min` as user-configured preferences — do NOT change them unless you have a specific plant-health reason (e.g. light stress visible in photo, photoperiod issue). Only adjust `peak_brightness` and `night_brightness` autonomously based on growth stage.
+- **Grow Light Control**: Adjust the autonomous light schedule. Lights run on the IoT device even without internet. The current schedule is provided at the top of every run — use it as your baseline and only change values your garden analysis tells you need to change.
 - **Fan Control**: On/off for air circulation, humidity/temp control. Can auto-off after a duration.
 - **Humidity Control**: Read Levoit humidifier sensor and control it. If water_lacks is true, alert user to refill.
 - **General**: Pest/disease ID, seasonal advice, composting, soil amendments, companion planting.
@@ -1216,29 +1216,29 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_lights",
-            "description": "Update the grow light schedule. The lights run autonomously on the IoT device. Only provide the parameters you want to change — unspecified values keep their current setting. In normal operation, only adjust peak_brightness based on growth stage. Leave sunrise_hour, sunset_hour, sunrise_ramp_min, and sunset_ramp_min at their current values unless you have a specific plant-health reason to change them — these are user-configured timing preferences.",
+            "description": "Update the grow light schedule. The lights run autonomously on the IoT device simulating natural sunlight with sunrise/sunset ramps. Only provide the parameters you want to change — unspecified values keep their current setting. Call this proactively whenever the current light settings don't match the plant's needs based on your garden analysis.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "sunrise_hour": {
                         "type": "integer",
-                        "description": "Hour (0-23) for sunrise to begin. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
+                        "description": "Hour (0-23) for sunrise to begin.",
                     },
                     "sunrise_ramp_min": {
                         "type": "integer",
-                        "description": "Minutes to ramp from night to peak brightness. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
+                        "description": "Minutes to ramp from night to peak brightness.",
                     },
                     "peak_brightness": {
                         "type": "integer",
-                        "description": "Maximum brightness 1-100 during daytime. Adjust this based on growth stage.",
+                        "description": "Maximum brightness 1-100 during daytime.",
                     },
                     "sunset_hour": {
                         "type": "integer",
-                        "description": "Hour (0-23) for sunset to begin. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
+                        "description": "Hour (0-23) for sunset to begin.",
                     },
                     "sunset_ramp_min": {
                         "type": "integer",
-                        "description": "Minutes to ramp from peak to night brightness. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
+                        "description": "Minutes to ramp from peak to night brightness.",
                     },
                     "night_brightness": {
                         "type": "integer",
@@ -1880,6 +1880,20 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 )
         except Exception as e:
             logger.warning(f"Failed to load garden config: {e}")
+
+        # Inject current light schedule so agent has baseline before deciding what to change
+        try:
+            current_schedule = await asyncio.to_thread(self._fetch_light_schedule)
+            if current_schedule:
+                instructions += (
+                    f"\n\n## Current Light Schedule (your baseline — only change what your analysis warrants)\n"
+                    f"- Sunrise: {current_schedule.get('sunrise_hour')}:00, ramp {current_schedule.get('sunrise_ramp_min')} min\n"
+                    f"- Peak brightness: {current_schedule.get('peak_brightness')}%\n"
+                    f"- Sunset: {current_schedule.get('sunset_hour')}:00, ramp {current_schedule.get('sunset_ramp_min')} min\n"
+                    f"- Night brightness: {current_schedule.get('night_brightness')}%"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load light schedule: {e}")
 
         # Load garden activity log for context
         try:
