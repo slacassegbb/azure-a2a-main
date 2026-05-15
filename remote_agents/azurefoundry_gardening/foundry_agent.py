@@ -1152,13 +1152,13 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "irrigate_garden",
-            "description": "Trigger the IoT irrigation system to water the garden. Call this autonomously when any pot drops below ~20% water level based on calibrated weight, OR when the user explicitly asks to water. Default duration is 120 seconds (2 minutes). IMPORTANT: Only call this tool ONCE per irrigation event.",
+            "description": "Trigger the IoT irrigation system to water the garden. Call this autonomously when any pot drops below ~20% water level based on calibrated weight, OR when the user explicitly asks to water. Calculate duration from pot weight data: (wet_weight - current_weight) / flow_rate_g_per_sec. IMPORTANT: Only call this tool ONCE per irrigation event.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "duration_seconds": {
                         "type": "integer",
-                        "description": "Duration in seconds. Convert user's request: '2 minutes' = 120, '30 seconds' = 30, '5 minutes' = 300. If user doesn't specify, use 120.",
+                        "description": "Duration in seconds. Calculate from pot weight deficit and valve flow rate. If user specifies a duration, use that. If flow rate unknown, use 60s as a calibration run.",
                     }
                 },
                 "required": [],
@@ -1285,7 +1285,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     },
                     "duration_seconds": {
                         "type": "integer",
-                        "description": "How long to irrigate in seconds. Default 120 (2 minutes).",
+                        "description": "How long to irrigate in seconds. Calculate from pot weight deficit and valve flow rate.",
                     },
                 },
                 "required": ["valve"],
