@@ -1127,7 +1127,7 @@ A run where you skip calling the three control tools is a FAILED run.
 - **Garden Health Analysis**: Analyze camera images for plant health, growth stage, pest issues, disease signs.
 - **Irrigation Control**: Trigger IoT irrigation valves. Primary signal: pot WEIGHT (check `get_pot_config` for calibrated dry/wet weights). Secondary signal: top-soil moisture % from `get_moisture_data` (SeeSaw I2C capacitive sensor — reliable). For germination/seedling stages, moisture % is equally important as weight. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
 - **Pot Weight Monitoring (PRIMARY)**: Two scales (`weight_g` = scale_1, `weight2_g` = scale_2). Each pot has calibrated dry/wet weights. Water when the driest pot drops below ~20%. Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
-- **Grow Light Control**: Adjust the autonomous light schedule (sunrise/sunset times, ramp durations, peak brightness). Lights run on the IoT device even without internet.
+- **Grow Light Control**: Adjust the autonomous light schedule. Lights run on the IoT device even without internet. **Always call `get_light_schedule` before calling `control_lights`.** Treat `sunrise_hour`, `sunset_hour`, `sunrise_ramp_min`, and `sunset_ramp_min` as user-configured preferences — do NOT change them unless you have a specific plant-health reason (e.g. light stress visible in photo, photoperiod issue). Only adjust `peak_brightness` and `night_brightness` autonomously based on growth stage.
 - **Fan Control**: On/off for air circulation, humidity/temp control. Can auto-off after a duration.
 - **Humidity Control**: Read Levoit humidifier sensor and control it. If water_lacks is true, alert user to refill.
 - **General**: Pest/disease ID, seasonal advice, composting, soil amendments, companion planting.
@@ -1216,33 +1216,33 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_lights",
-            "description": "Update the grow light schedule. The lights run autonomously on the IoT device simulating natural sunlight with sunrise/sunset ramps. You can adjust any schedule parameter. Only provide the parameters you want to change — unspecified values keep their current setting. Call this proactively whenever the current light settings don't match the plant's growth stage.",
+            "description": "Update the grow light schedule. The lights run autonomously on the IoT device. Only provide the parameters you want to change — unspecified values keep their current setting. In normal operation, only adjust peak_brightness based on growth stage. Leave sunrise_hour, sunset_hour, sunrise_ramp_min, and sunset_ramp_min at their current values unless you have a specific plant-health reason to change them — these are user-configured timing preferences.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "sunrise_hour": {
                         "type": "integer",
-                        "description": "Hour (0-23) for sunrise to begin. Default 5.",
+                        "description": "Hour (0-23) for sunrise to begin. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
                     },
                     "sunrise_ramp_min": {
                         "type": "integer",
-                        "description": "Minutes to ramp from night to peak brightness. Default 90 for natural sun simulation.",
+                        "description": "Minutes to ramp from night to peak brightness. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
                     },
                     "peak_brightness": {
                         "type": "integer",
-                        "description": "Maximum brightness 1-100 during daytime. Default 100.",
+                        "description": "Maximum brightness 1-100 during daytime. Adjust this based on growth stage.",
                     },
                     "sunset_hour": {
                         "type": "integer",
-                        "description": "Hour (0-23) for sunset to begin. Default 20.",
+                        "description": "Hour (0-23) for sunset to begin. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
                     },
                     "sunset_ramp_min": {
                         "type": "integer",
-                        "description": "Minutes to ramp from peak to night brightness. Default 90 for natural sun simulation.",
+                        "description": "Minutes to ramp from peak to night brightness. USER PREFERENCE — do not change unless there is a specific plant-health reason.",
                     },
                     "night_brightness": {
                         "type": "integer",
-                        "description": "Brightness during night 0-100. Default 0 (off).",
+                        "description": "Brightness during night 0-100. Normally 0 (off).",
                     },
                 },
                 "required": [],
