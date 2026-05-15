@@ -1158,7 +1158,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 "properties": {
                     "duration_seconds": {
                         "type": "integer",
-                        "description": "Duration in seconds. Calculate from pot weight deficit and valve flow rate. If user specifies a duration, use that. If flow rate unknown, use 60s as a calibration run.",
+                        "description": "Duration in seconds, max 120. Calculate from pot weight deficit and flow rate when calibrated. If flow rate unknown, use 60s as a calibration run.",
                     }
                 },
                 "required": [],
@@ -1285,7 +1285,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     },
                     "duration_seconds": {
                         "type": "integer",
-                        "description": "How long to irrigate in seconds. Calculate from pot weight deficit and valve flow rate.",
+                        "description": "How long to irrigate in seconds, max 120. Calculate from pot weight deficit and flow rate when calibrated. If flow rate unknown, use 60s as a calibration run.",
                     },
                 },
                 "required": ["valve"],
@@ -1459,8 +1459,8 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         images_data: List[tuple] = []
 
         if tool_name == "irrigate_garden":
-            duration_s = tool_args.get("duration_seconds", 120)
-            duration_ms = max(1000, min(duration_s * 1000, 600000))
+            duration_s = tool_args.get("duration_seconds", 60)
+            duration_ms = max(1000, min(duration_s * 1000, 120000))  # hard cap 120s
             duration_str = self._format_duration(duration_ms)
             try:
                 request_id, duration_ms = await asyncio.to_thread(self._trigger_irrigation, duration_ms)
@@ -1621,7 +1621,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         elif tool_name == "irrigate_with_valve":
             try:
                 valve = tool_args.get("valve", "a").lower()
-                duration_s = tool_args.get("duration_seconds", 120)
+                duration_s = min(tool_args.get("duration_seconds", 60), 120)  # hard cap 120s
                 request_id = await asyncio.to_thread(self._trigger_valve_irrigation, valve, duration_s)
                 valve_names = {"a": "plain water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
                 valve_name = valve_names.get(valve, valve)
