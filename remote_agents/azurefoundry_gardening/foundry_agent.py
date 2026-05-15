@@ -1113,11 +1113,11 @@ The user is replying via SMS to a question you previously asked. Do NOT run a fu
 Do nothing else.
 
 **Every run, do this (normal mode):**
-1. Take a photo, read sensors (weight, temp, humidity, **top-soil moisture** via `get_moisture_data`), read current light schedule
+1. Take a photo, read sensors (weight, temp, humidity, **top-soil moisture** via `get_moisture_data`)
 2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
 4. Call `update_growth_assessment` with what you visually observe — stage, estimated height %, brief notes. This feeds the dashboard and your own memory for next run. MANDATORY every run. If no green growth is visible above the soil, report height_pct=0 — do NOT guess or assume emergence.
-5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
+5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions. For `control_lights`: the current schedule is already in your context above — use it as your starting point and only pass parameters you have a specific reason to change based on your garden analysis. Don't change values arbitrarily.
 6. **IRRIGATION DECISION**: Call `get_moisture_data` EVERY RUN. The moisture sensor measures TOP SOIL only (shallow capacitive I2C sensor). Irrigate if ANY of these are true: (a) pot weight drops below ~20% of calibrated range, (b) top soil moisture drops below ~20% for any growth stage, (c) top soil moisture drops below ~35% during germination or seedling stage. Top soil drying out matters at ALL stages — even if weight looks ok, dry surface means the plant needs water.
 7. Report what you did and what you observed
 
