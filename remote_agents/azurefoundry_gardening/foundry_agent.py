@@ -1117,7 +1117,7 @@ Do nothing else.
 2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
 3. Determine growth stage from garden description + visual evidence → decide appropriate settings
 4. Call `update_growth_assessment` with what you visually observe — stage, estimated height %, brief notes. This feeds the dashboard and your own memory for next run. MANDATORY every run. If no green growth is visible above the soil, report height_pct=0 — do NOT guess or assume emergence.
-5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions. For `control_lights`: the current schedule is already in your context above — use it as your starting point and only pass parameters you have a specific reason to change based on your garden analysis. Don't change values arbitrarily.
+5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
 6. **IRRIGATION DECISION**: Call `get_moisture_data` EVERY RUN. The moisture sensor measures TOP SOIL only (shallow capacitive I2C sensor). Irrigate if ANY of these are true: (a) pot weight drops below ~20% of calibrated range, (b) top soil moisture drops below ~20% for any growth stage, (c) top soil moisture drops below ~35% during germination or seedling stage. Top soil drying out matters at ALL stages — even if weight looks ok, dry surface means the plant needs water.
 7. Report what you did and what you observed
 
@@ -1127,7 +1127,7 @@ A run where you skip calling the three control tools is a FAILED run.
 - **Garden Health Analysis**: Analyze camera images for plant health, growth stage, pest issues, disease signs.
 - **Irrigation Control**: Trigger IoT irrigation valves. Primary signal: pot WEIGHT (check `get_pot_config` for calibrated dry/wet weights). Secondary signal: top-soil moisture % from `get_moisture_data` (SeeSaw I2C capacitive sensor — reliable). For germination/seedling stages, moisture % is equally important as weight. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
 - **Pot Weight Monitoring (PRIMARY)**: Two scales (`weight_g` = scale_1, `weight2_g` = scale_2). Each pot has calibrated dry/wet weights. Water when the driest pot drops below ~20%. Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
-- **Grow Light Control**: Adjust the autonomous light schedule. Lights run on the IoT device even without internet. The current schedule is provided at the top of every run — use it as your baseline and only change values your garden analysis tells you need to change.
+- **Grow Light Control**: Adjust the autonomous light schedule (sunrise/sunset times, ramp durations, peak brightness). Lights run on the IoT device even without internet.
 - **Fan Control**: On/off for air circulation, humidity/temp control. Can auto-off after a duration.
 - **Humidity Control**: Read Levoit humidifier sensor and control it. If water_lacks is true, alert user to refill.
 - **General**: Pest/disease ID, seasonal advice, composting, soil amendments, companion planting.
@@ -1328,11 +1328,11 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     },
                     "target_humidity": {
                         "type": "integer",
-                        "description": "Target humidity % for auto mode (30-80). Default 50. Be conservative.",
+                        "description": "Target humidity % for auto mode (30-80). Choose based on current growth stage and sensor readings.",
                     },
                     "mist_level": {
                         "type": "integer",
-                        "description": "Mist level 1-9 for manual mode. Lower = less water usage. Default 3.",
+                        "description": "Mist level 1-9 for manual mode. Choose based on how far current humidity is from target.",
                     },
                 },
                 "required": ["action"],
@@ -1880,20 +1880,6 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 )
         except Exception as e:
             logger.warning(f"Failed to load garden config: {e}")
-
-        # Inject current light schedule so agent has baseline before deciding what to change
-        try:
-            current_schedule = await asyncio.to_thread(self._fetch_light_schedule)
-            if current_schedule:
-                instructions += (
-                    f"\n\n## Current Light Schedule (your baseline — only change what your analysis warrants)\n"
-                    f"- Sunrise: {current_schedule.get('sunrise_hour')}:00, ramp {current_schedule.get('sunrise_ramp_min')} min\n"
-                    f"- Peak brightness: {current_schedule.get('peak_brightness')}%\n"
-                    f"- Sunset: {current_schedule.get('sunset_hour')}:00, ramp {current_schedule.get('sunset_ramp_min')} min\n"
-                    f"- Night brightness: {current_schedule.get('night_brightness')}%"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to load light schedule: {e}")
 
         # Load garden activity log for context
         try:
