@@ -241,27 +241,24 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig, h
   const sunsetEndFrac  = (displaySunset  + schedule.sunset_ramp_min / 60) / 24;
 
   const isDaytime = progress >= sunriseFrac && progress <= sunsetEndFrac;
-  const dayRange  = sunsetEndFrac - sunriseFrac || 1;
-  const dayProg   = isDaytime ? (progress - sunriseFrac) / dayRange : 0;
 
-  const arcStartX = PAD + (displaySunrise / 24) * arcW;
-  const arcEndX   = PAD + (displaySunset  / 24) * arcW;
-  const arcSpanX  = arcEndX - arcStartX;
-  const arcMidX   = (arcStartX + arcEndX) / 2;
+// Arc always spans full width so it's visually centered regardless of sunrise/sunset hours
+  const arcLeft  = PAD;
+  const arcRight = W - PAD;
+  const arcMidX  = (arcLeft + arcRight) / 2;
 
-  const sunX = arcStartX + dayProg * arcSpanX;
-  // Sun Y follows the arc based on time (parabola), brightness only affects glow
-  const sunY = GNDLINE - 4 * ARC_H * dayProg * (1 - dayProg);
+  // Quadratic bezier along full 24h arc: t=0 (left/midnight) → t=0.5 (noon/peak) → t=1 (right/midnight)
+  const qBezFull = (t: number): [number, number] => {
+    const cpY = GNDLINE - 2 * ARC_H;
+    const mt = 1 - t;
+    return [
+      mt*mt*arcLeft + 2*mt*t*arcMidX + t*t*arcRight,
+      mt*mt*GNDLINE + 2*mt*t*cpY     + t*t*GNDLINE,
+    ];
+  };
 
-  const nightDuration = (1 - sunsetEndFrac) + sunriseFrac;
-  const nightProg = !isDaytime
-    ? (progress > sunsetEndFrac
-        ? (progress - sunsetEndFrac) / nightDuration
-        : (progress + 1 - sunsetEndFrac) / nightDuration)
-    : 0;
-  // Moon travels the mirror arc: from arcEndX (sunset) back to arcStartX (sunrise)
-  const moonX = arcEndX + (arcStartX - arcEndX) * nightProg;
-  const moonY = GNDLINE - 4 * ARC_H * nightProg * (1 - nightProg);
+  const [sunX, sunY]   = qBezFull(progress);
+  const [moonX, moonY] = qBezFull(progress);
 
   const isNight = phase === "night";
   const isDay   = phase === "day";
@@ -638,17 +635,15 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig, h
         {/* ── Celestial arcs (behind mountains) ── */}
         {(() => {
           const cpY = GNDLINE - 2 * ARC_H;
-          const dayArcPath = `M ${arcStartX},${GNDLINE} Q ${arcMidX},${cpY} ${arcEndX},${GNDLINE}`;
-          const nightArcPath = `M ${arcEndX},${GNDLINE} Q ${arcMidX},${cpY} ${arcStartX},${GNDLINE}`;
-          const dayTrailProg = isDaytime ? dayProg : 1;
-          const daySubCpX = arcStartX + (arcMidX - arcStartX) * dayTrailProg;
-          const daySubCpY = GNDLINE - 2 * ARC_H * dayTrailProg;
-          const dayTrailEnd = isDaytime ? `${sunX},${sunY}` : `${arcEndX},${GNDLINE}`;
-          const dayTrailPath = `M ${arcStartX},${GNDLINE} Q ${daySubCpX},${daySubCpY} ${dayTrailEnd}`;
-          const nightSubCpX = arcEndX + (arcMidX - arcEndX) * nightProg;
-          const nightSubCpY = GNDLINE - 2 * ARC_H * nightProg;
-          const nightTrailPath = nightProg > 0.01
-            ? `M ${arcEndX},${GNDLINE} Q ${nightSubCpX},${nightSubCpY} ${moonX},${moonY}`
+          const dayArcPath   = `M ${arcLeft},${GNDLINE} Q ${arcMidX},${cpY} ${arcRight},${GNDLINE}`;
+          const nightArcPath = `M ${arcRight},${GNDLINE} Q ${arcMidX},${cpY} ${arcLeft},${GNDLINE}`;
+          const dayTrailProg = isDaytime ? progress : sunsetEndFrac;
+          const daySubCpX = arcLeft + (arcMidX - arcLeft) * dayTrailProg * 2;
+          const daySubCpY = GNDLINE - 2 * ARC_H * Math.min(1, dayTrailProg * 2);
+          const dayTrailEnd = isDaytime ? `${sunX},${sunY}` : `${arcRight},${GNDLINE}`;
+          const dayTrailPath = `M ${arcLeft},${GNDLINE} Q ${daySubCpX},${daySubCpY} ${dayTrailEnd}`;
+          const nightTrailPath = !isDaytime
+            ? `M ${arcRight},${GNDLINE} Q ${arcMidX},${cpY * 0.5 + GNDLINE * 0.5} ${moonX},${moonY}`
             : null;
           return (
             <>
@@ -806,17 +801,11 @@ export default function LightTimeline({ schedule, readings = [], gardenConfig, h
 
         {/* Drag handles on arc in sky */}
         {(() => {
-          const cpY = GNDLINE - 2 * ARC_H;
-          const qBez = (t: number): [number, number] => {
-            const mt = 1 - t;
-            return [
-              mt*mt*arcStartX + 2*mt*t*arcMidX + t*t*arcEndX,
-              mt*mt*GNDLINE   + 2*mt*t*cpY      + t*t*GNDLINE,
-            ];
-          };
-          const T = 0.13;
-          const [srMx, srMy] = qBez(T);
-          const [ssMx, ssMy] = qBez(1 - T);
+          // Clamp to [0.05, 0.95] so handles at midnight (T=0 or T=1) don't fall to ground level
+          const srT = Math.max(0.05, Math.min(0.95, displaySunrise / 24));
+          const ssT = Math.max(0.05, Math.min(0.95, (displaySunset % 24 === 0 && displaySunset > 0 ? 23.5 : displaySunset) / 24));
+          const [srMx, srMy] = qBezFull(srT);
+          const [ssMx, ssMy] = qBezFull(ssT);
           return (
             <>
               {([

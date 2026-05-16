@@ -1,17 +1,16 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { RefreshCw, Sprout, Settings } from "lucide-react";
+import { RefreshCw, Sprout } from "lucide-react";
 import GardenConfig from "./garden-config";
 import { GardenDashboardData } from "@/lib/garden/types";
 import { POLL_INTERVAL_MS } from "@/lib/garden/constants";
-import { getCurrentBrightness } from "@/lib/garden/calculations";
+import { getCurrentBrightness, formatTimeAgo } from "@/lib/garden/calculations";
 import SensorCard from "./sensor-card";
 import CameraFeed from "./camera-feed";
 import LightTimeline from "./light-timeline";
 import SystemStatus from "./system-status";
 import AgentLog from "./agent-log";
-import QuickControls from "./quick-controls";
 import IrrigationTile from "./irrigation-tile";
 import NextEvent from "./next-event";
 import LastAction from "./last-action";
@@ -30,16 +29,8 @@ export default function GardenDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [liveUser, setLiveUser] = useState<string | undefined>();
   const [liveAgent, setLiveAgent] = useState<string | undefined>();
-  const leftColRef = useRef<HTMLDivElement>(null);
-  const [leftColHeight, setLeftColHeight] = useState<number | undefined>(undefined);
   const prevVoiceLogLen = useRef(0);
 
-  useEffect(() => {
-    if (!leftColRef.current) return;
-    const ro = new ResizeObserver(entries => setLeftColHeight(entries[0].contentRect.height));
-    ro.observe(leftColRef.current);
-    return () => ro.disconnect();
-  }, []);
 
   // Clear live voice state once the entry is persisted and appears in fetched data
   useEffect(() => {
@@ -104,6 +95,91 @@ export default function GardenDashboard() {
   const humidityReadings = data?.humidifier?.readings || [];
   const currentFan = data?.fan?.state ? (data.fan.speed || 100) : 0;
 
+  // Min/max temp today
+  const tempMinMax = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayReadings = (moisture?.readings || []).filter(r => new Date(r.ts) >= today);
+    if (todayReadings.length < 2) return null;
+    const temps = todayReadings.map(r => (r as any).temp_c).filter((t): t is number => t != null);
+    if (!temps.length) return null;
+    return { min: Math.min(...temps), max: Math.max(...temps) };
+  }, [moisture?.readings]);
+
+  // Light hours per day + schedule label from schedule
+  const { lightScheduleLabel } = useMemo(() => {
+    if (!schedule) return { lightHoursPerDay: null, lightScheduleLabel: null };
+    const onMinutes = (schedule.sunset_hour * 60 + schedule.sunset_ramp_min) - (schedule.sunrise_hour * 60);
+    const hours = (onMinutes / 60).toFixed(1);
+    const fmtH = (h: number) => {
+      const norm = ((h % 24) + 24) % 24;
+      const hr = Math.floor(norm);
+      const ampm = hr < 12 ? "AM" : "PM";
+      const h12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr;
+      return `${h12}${ampm}`;
+    };
+    return { lightScheduleLabel: `${fmtH(schedule.sunrise_hour)}–${fmtH(schedule.sunset_hour)} · ${hours}h` };
+  }, [schedule]);
+
+  // Humidity: time since humidifier last ran
+  const humidifierLastOn = useMemo(() => {
+    const readings = data?.humidifier?.readings || [];
+    const lastOn = [...readings].reverse().find(r => r.is_on);
+    return lastOn?.ts ?? null;
+  }, [data?.humidifier?.readings]);
+
+  // Days until dry (per pot)
+  const daysUntilDry = useMemo(() => {
+    const readings = moisture?.readings;
+    if (!readings?.length) return [];
+    const events = data?.events || [];
+    const lastWater = events
+      .filter(e => e.type === "irrigate" || e.type === "valve")
+      .map(e => new Date(e.ts).getTime())
+      .sort((a, b) => b - a)[0];
+    if (!lastWater) return [];
+    const sinceWatered = readings.filter(r => new Date(r.ts).getTime() >= lastWater);
+    if (sinceWatered.length < 3) return [];
+    const elapsedDays = (Date.now() - lastWater) / (24 * 60 * 60 * 1000);
+    if (elapsedDays < 0.5) return [];
+    const result: { id: string; days: number }[] = [];
+    const potConfigs = data?.garden_config?.pots || [];
+    const calc = (id: string, key: "weight_g" | "weight2_g") => {
+      const atWatering = (sinceWatered[0] as any)[key] as number | null;
+      const current = (moisture?.current as any)?.[key] as number | null;
+      const potCfg = potConfigs.find(p => p.id === id);
+      const dryWeight = potCfg?.dry_weight_g;
+      if (atWatering == null || current == null || dryWeight == null) return;
+      const dailyLoss = (atWatering - current) / elapsedDays;
+      if (dailyLoss <= 0) return;
+      const remaining = current - dryWeight;
+      if (remaining <= 0) return;
+      result.push({ id, days: remaining / dailyLoss });
+    };
+    calc("scale_1", "weight_g");
+    calc("scale_2", "weight2_g");
+    return result;
+  }, [moisture, data?.events, data?.garden_config]);
+
+  const weightDeltas = useMemo(() => {
+    const readings = moisture?.readings;
+    if (!readings?.length) return [];
+    const events = data?.events || [];
+    const lastWater = events
+      .filter(e => e.type === "irrigate" || e.type === "valve")
+      .map(e => new Date(e.ts).getTime())
+      .sort((a, b) => b - a)[0];
+    const target = lastWater ?? (Date.now() - 24 * 60 * 60 * 1000);
+    const closest = readings.reduce((best, r) =>
+      Math.abs(new Date(r.ts).getTime() - target) < Math.abs(new Date(best.ts).getTime() - target) ? r : best
+    );
+    const result: { id: string; deltaG: number; sinceWatered: boolean }[] = [];
+    const w1 = moisture?.current?.weight_g;
+    const w2 = moisture?.current?.weight2_g;
+    if (w1 != null && closest.weight_g != null) result.push({ id: "scale_1", deltaG: w1 - closest.weight_g, sinceWatered: !!lastWater });
+    if (w2 != null && closest.weight2_g != null) result.push({ id: "scale_2", deltaG: w2 - closest.weight2_g, sinceWatered: !!lastWater });
+    return result;
+  }, [moisture, data?.events]);
+
   const sendControl = useCallback(async (action: string, params: Record<string, any>) => {
     await fetch("/api/garden/control", {
       method: "POST",
@@ -124,7 +200,7 @@ export default function GardenDashboard() {
             <div className="w-6 h-6 xl:w-8 xl:h-8 rounded xl:rounded-lg flex items-center justify-center" style={{ background: "hsl(152, 75%, 50%, 0.15)" }}>
               <Sprout className="w-3.5 h-3.5 xl:w-4 xl:h-4" style={{ color: "hsl(152, 75%, 50%)" }} />
             </div>
-            <h1 className="text-sm xl:text-base font-semibold tracking-tight hidden md:block">Smart Garden</h1>
+            <h1 className="text-sm xl:text-base font-semibold tracking-tight hidden md:block">Smart Garden Agent</h1>
           </div>
 
           {/* Spacer */}
@@ -149,114 +225,162 @@ export default function GardenDashboard() {
       </header>
 
       <main className="max-w-[1400px] mx-auto p-2 md:p-3 xl:p-4 space-y-2 md:space-y-3 xl:space-y-4">
-        {/* Row 1: Camera + Light Cycle side by side */}
+        {/* Row 1: Camera + Light Timeline — full width */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
           <CameraFeed url={data?.camera_url} timestamp={data?.camera_timestamp} photos={data?.photos || []} />
           <LightTimeline schedule={schedule} readings={moisture?.readings} gardenConfig={data?.garden_config} humidity={data?.humidifier?.current?.humidity} />
         </div>
 
-        {/* Row 2: Sensor cards — 5 across (3 on mobile) */}
-        <div className="grid grid-cols-5 gap-1.5 md:gap-2 xl:gap-3">
-          <SensorCard
-            label="Temperature"
-            value={tempC != null ? tempC.toFixed(1) : "--"}
-            unit="°C"
-            secondaryValue={tempC != null ? `${(tempC * 9 / 5 + 32).toFixed(0)}°F` : ""}
-            color="hsl(35, 95%, 60%)"
-            icon="thermometer"
-            history={moisture?.readings?.map(r => ({ ts: r.ts, value: (r as any).temp_c ?? tempC ?? 0 })) || []}
-            dataKey="value"
-          />
-          <SensorCard
-            label="Soil Moisture"
-            value={moisturePct != null ? String(moisturePct) : "--"}
-            unit="%"
-            color="hsl(185, 90%, 55%)"
-            icon="droplets"
-            history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.pct })) || []}
-            dataKey="value"
-          />
-          <SensorCard
-            label="Humidity"
-            value={humidity != null ? String(humidity) : "--"}
-            unit="%"
-            secondaryValue={data?.humidifier?.current?.is_on ? "ON" : data?.humidifier ? "OFF" : "Via agent"}
-            color="hsl(270, 70%, 65%)"
-            icon="cloud"
-            history={humidityReadings.map(r => ({ ts: r.ts, value: r.humidity }))}
-            dataKey="value"
-            controls={{
-              buttons: [
-                { label: "OFF", value: 0 },
-                { label: "40%", value: 40 },
-                { label: "50%", value: 50 },
-                { label: "60%", value: 60 },
-              ],
-              activeValue: data?.humidifier?.current?.is_on ? (data.humidifier.current.target_humidity || 50) : 0,
-              onSelect: async (val) => {
-                if (val === 0) {
-                  await sendControl("set_humidifier", { action: "off" });
-                } else {
-                  await sendControl("set_humidifier", { action: "auto", target_humidity: val });
-                }
-              },
-            }}
-          />
-          <SensorCard
-            label="Light"
-            value={schedule ? String(getCurrentBrightness(schedule)) : "--"}
-            unit="%"
-            color="hsl(48, 95%, 65%)"
-            icon="sun"
-            history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.light ?? 0 })) || []}
-            dataKey="value"
-            controls={{
-              buttons: [
-                { label: "OFF", value: 0 },
-                { label: "25", value: 25 },
-                { label: "50", value: 50 },
-                { label: "75", value: 75 },
-                { label: "100", value: 100 },
-              ],
-              activeValue: schedule ? getCurrentBrightness(schedule) : 0,
-              onSelect: async (val) => {
-                if (val === 0) {
-                  await sendControl("set_light_power", { state: false });
-                } else {
-                  await sendControl("set_light_brightness", { brightness: val });
-                }
-              },
-            }}
-          />
-          <SensorCard
-            label="Fan"
-            value={currentFan > 0 ? String(currentFan) : "OFF"}
-            unit={currentFan > 0 ? "%" : ""}
-            color="hsl(185, 70%, 55%)"
-            icon="fan"
-            history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.fan ?? 0 })) || []}
-            dataKey="value"
-            controls={{
-              buttons: [
-                { label: "OFF", value: 0 },
-                { label: "25", value: 25 },
-                { label: "50", value: 50 },
-                { label: "75", value: 75 },
-                { label: "100", value: 100 },
-              ],
-              activeValue: currentFan,
-              onSelect: async (val) => {
-                await sendControl("set_fan", { state: val > 0, speed: val });
-              },
-            }}
-          />
-        </div>
+        {/* Row 2: Left = sensors/devices | Right = agent intelligence */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-3 xl:gap-4" style={{ alignItems: "start" }}>
 
-        {/* Middle row: Irrigation+Status+Pots | Chat + Agent Log */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3 xl:gap-4" style={{ alignItems: "start" }}>
-          <div className="space-y-2" ref={leftColRef}>
+          {/* ── LEFT: Agent Intelligence ── */}
+          <div className="flex flex-col gap-2 md:gap-3">
+            {/* Next Event + Last Action */}
+            <div className="grid grid-cols-2 gap-2">
+              <NextEvent schedule={schedule} />
+              <LastAction log={data?.garden_log || []} />
+            </div>
+
+            {/* Agent Knowledge */}
+            <PlantInfoTile config={data?.garden_config || null} />
+
+            {/* Garden Chat */}
+            <VoiceConversationTile
+              entries={data?.voice_log || []}
+              liveUser={voice.isVoiceProcessing ? (voice.transcript || "...") : liveUser}
+              liveAgent={voice.isVoiceProcessing ? "..." : liveAgent}
+              isConnected={voice.isConnected}
+              isListening={voice.isListening}
+              isSpeaking={voice.isSpeaking}
+              isProcessing={voice.isProcessing}
+              isTalking={voice.isTalking}
+              isVoiceProcessing={voice.isVoiceProcessing}
+              currentAgent={voice.currentAgent}
+              voiceError={voice.error}
+              onStartVoice={voice.startConversation}
+              onTalk={voice.startTalking}
+              onStopTalk={voice.stopTalking}
+              onStopVoice={() => { voice.stopConversation(); setLiveUser(undefined); setLiveAgent(undefined); }}
+              onTextSent={(user, agent) => { setLiveUser(user); setLiveAgent(agent); setTimeout(fetchData, 1000); }}
+            />
+
+            {/* Agent Log */}
+            <div style={{ height: "280px" }}>
+              <AgentLog entries={data?.garden_log || []} />
+            </div>
+          </div>
+
+          {/* ── RIGHT: Sensors & Devices ── */}
+          <div className="space-y-2 md:space-y-3">
+            {/* Sensor cards — 2 top, 3 bottom */}
+            <div className="grid grid-cols-2 gap-1.5 md:gap-2">
+              <SensorCard
+                label="Temperature"
+                value={tempC != null ? tempC.toFixed(1) : "--"}
+                unit="°C"
+                secondaryValue={tempMinMax ? `↑${tempMinMax.max.toFixed(1)}° ↓${tempMinMax.min.toFixed(1)}° today` : tempC != null ? `${(tempC * 9 / 5 + 32).toFixed(0)}°F` : ""}
+                color="hsl(35, 95%, 60%)"
+                icon="thermometer"
+                history={moisture?.readings?.map(r => ({ ts: r.ts, value: (r as any).temp_c ?? tempC ?? 0 })) || []}
+                dataKey="value"
+              />
+              <SensorCard
+                label="Soil Moisture"
+                value={moisturePct != null ? String(moisturePct) : "--"}
+                unit="%"
+                color="hsl(185, 90%, 55%)"
+                icon="droplets"
+                history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.pct })) || []}
+                dataKey="value"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 md:gap-2">
+              <SensorCard
+                label="Humidity"
+                value={humidity != null ? String(humidity) : "--"}
+                unit="%"
+                secondaryValue={data?.humidifier?.current?.is_on
+                  ? `target ${data.humidifier.current.target_humidity ?? "?"}%`
+                  : humidifierLastOn ? `Last on ${formatTimeAgo(humidifierLastOn)}` : data?.humidifier ? "OFF" : "Via agent"}
+                color="hsl(270, 70%, 65%)"
+                icon="cloud"
+                history={humidityReadings.map(r => ({ ts: r.ts, value: r.humidity }))}
+                dataKey="value"
+                controls={{
+                  buttons: [
+                    { label: "OFF", value: 0 },
+                    { label: "40%", value: 40 },
+                    { label: "50%", value: 50 },
+                    { label: "60%", value: 60 },
+                  ],
+                  activeValue: data?.humidifier?.current?.is_on ? (data.humidifier.current.target_humidity || 50) : 0,
+                  onSelect: async (val) => {
+                    if (val === 0) {
+                      await sendControl("set_humidifier", { action: "off" });
+                    } else {
+                      await sendControl("set_humidifier", { action: "auto", target_humidity: val });
+                    }
+                  },
+                }}
+              />
+              <SensorCard
+                label="Light"
+                value={schedule ? String(getCurrentBrightness(schedule)) : "--"}
+                unit="%"
+                secondaryValue={lightScheduleLabel ?? undefined}
+                color="hsl(48, 95%, 65%)"
+                icon="sun"
+                history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.light ?? 0 })) || []}
+                dataKey="value"
+                controls={{
+                  buttons: [
+                    { label: "OFF", value: 0 },
+                    { label: "25", value: 25 },
+                    { label: "50", value: 50 },
+                    { label: "75", value: 75 },
+                    { label: "100", value: 100 },
+                  ],
+                  activeValue: schedule ? getCurrentBrightness(schedule) : 0,
+                  onSelect: async (val) => {
+                    if (val === 0) {
+                      await sendControl("set_light_power", { state: false });
+                    } else {
+                      await sendControl("set_light_brightness", { brightness: val });
+                    }
+                  },
+                }}
+              />
+              <SensorCard
+                label="Fan"
+                value={currentFan > 0 ? String(currentFan) : "OFF"}
+                unit={currentFan > 0 ? "%" : ""}
+                secondaryValue={data?.fan?.state && data?.fan?.speed != null ? `set ${data.fan.speed}%` : undefined}
+                color="hsl(185, 70%, 55%)"
+                icon="fan"
+                history={moisture?.readings?.map(r => ({ ts: r.ts, value: r.fan ?? 0 })) || []}
+                dataKey="value"
+                controls={{
+                  buttons: [
+                    { label: "OFF", value: 0 },
+                    { label: "25", value: 25 },
+                    { label: "50", value: 50 },
+                    { label: "75", value: 75 },
+                    { label: "100", value: 100 },
+                  ],
+                  activeValue: currentFan,
+                  onSelect: async (val) => {
+                    await sendControl("set_fan", { state: val > 0, speed: val });
+                  },
+                }}
+              />
+            </div>
+
+            {/* Pot weights */}
             <PotWeightTile
               config={data?.garden_config || null}
+              weightDeltas={weightDeltas}
+              daysUntilDry={daysUntilDry}
               scaleWeights={(() => {
                 const sw: { id: string; weightG: number | null }[] = [];
                 if (moisture?.current?.weight_g != null) sw.push({ id: "scale_1", weightG: moisture.current.weight_g });
@@ -276,43 +400,19 @@ export default function GardenDashboard() {
                 await sendControl("tare_scale", { scale_id: scaleId });
               }}
             />
+
+            {/* Irrigation + System Status */}
             <div className="grid grid-cols-2 gap-2">
               <IrrigationTile onRefresh={fetchData} />
               <SystemStatus data={data} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <NextEvent schedule={schedule} />
-              <LastAction log={data?.garden_log || []} />
-            </div>
-            <PlantInfoTile config={data?.garden_config || null} />
-          </div>
-          <div className="flex flex-col gap-2" style={{ height: leftColHeight ? `${leftColHeight}px` : undefined }}>
-            <VoiceConversationTile
-              entries={data?.voice_log || []}
-              liveUser={voice.isVoiceProcessing ? (voice.transcript || "...") : liveUser}
-              liveAgent={voice.isVoiceProcessing ? "..." : liveAgent}
-              isConnected={voice.isConnected}
-              isListening={voice.isListening}
-              isSpeaking={voice.isSpeaking}
-              isProcessing={voice.isProcessing}
-              isTalking={voice.isTalking}
-              isVoiceProcessing={voice.isVoiceProcessing}
-              currentAgent={voice.currentAgent}
-              voiceError={voice.error}
-              onStartVoice={voice.startConversation}
-              onTalk={voice.startTalking}
-              onStopTalk={voice.stopTalking}
-              onStopVoice={() => { voice.stopConversation(); setLiveUser(undefined); setLiveAgent(undefined); }}
-              onTextSent={(user, agent) => { setLiveUser(user); setLiveAgent(agent); setTimeout(fetchData, 1000); }}
-            />
-            <div className="flex-1 min-h-0" style={{ minHeight: "300px" }}>
-              <AgentLog entries={data?.garden_log || []} />
-            </div>
           </div>
         </div>
 
-        {/* Historical Charts */}
-        <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={data?.events || []} gardenConfig={data?.garden_config} />
+        {/* Historical Charts — full width below both columns */}
+        <div className="mt-2 md:mt-3 xl:mt-4">
+          <EnvironmentChart readings={moisture?.readings || []} schedule={schedule} humidityReadings={humidityReadings} events={data?.events || []} gardenConfig={data?.garden_config} />
+        </div>
       </main>
     </div>
   );

@@ -98,7 +98,7 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
     <div className="rounded-xl p-4" style={{ background: "hsl(220, 18%, 11%)", border: "1px solid hsl(220, 15%, 16%)" }}>
       <div className="flex items-center justify-between mb-4">
         <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: "hsl(220, 10%, 50%)" }}>
-          Environment History
+          Sensor History
         </span>
         <div className="flex gap-2">
           <button
@@ -324,72 +324,130 @@ export default function EnvironmentChart({ readings, schedule, humidityReadings 
             if (chartData.length === 0) return [];
             const chartStartMs = new Date(chartData[0].ts).getTime();
             const chartEndMs   = new Date(chartData[chartData.length - 1].ts).getTime();
-            // Filter to visible window, then deduplicate consecutive same-value events
+
+            // Pre-compute domain max so we can place pills at the sensor's Y position
+            const domainMax = Math.max(
+              ...chartData.map(d => Math.max(
+                d.moisture ?? 0, d.temp ?? 0, d.light ?? 0,
+                d.humidity ?? 0, d.fan ?? 0, d.water ?? 0, d.water2 ?? 0
+              ))
+            ) * 1.08; // match recharts auto padding
+
             const visible = events.filter(ev => {
               const t = new Date(ev.ts).getTime();
               return t >= chartStartMs && t <= chartEndMs;
             });
-            const lastSeen: Record<string, string> = {};
-            const deduped = visible.filter(ev => {
-              const key = ev.type || "other";
-              const val = ev.detail || "";
-              if (lastSeen[key] === val) return false;
-              lastSeen[key] = val;
-              return true;
+
+            // Deduplicate: keep only the last event per type per 30-min window
+            const buckets: Record<string, GardenEvent> = {};
+            visible.forEach(ev => {
+              const t = new Date(ev.ts).getTime();
+              const bucket = Math.floor(t / (30 * 60 * 1000));
+              const key = `${ev.type || "other"}-${bucket}`;
+              buckets[key] = ev;
             });
-            // Pre-group by snapped time so labels in the same column are staggered
-            const timeIndex: Record<string, number> = {};
-            return deduped.map((ev, i) => {
-            // Snap event to nearest chartData point so ReferenceLine x always matches
-            const evMs = new Date(ev.ts).getTime();
-            const nearest = chartData.reduce((best, d) => {
-              const diff = Math.abs(new Date(d.ts).getTime() - evMs);
-              return diff < best.diff ? { time: d.time, diff } : best;
-            }, { time: chartData[0].time, diff: Infinity });
-            const evTime = nearest.time;
-            const posInGroup = timeIndex[evTime] ?? 0;
-            timeIndex[evTime] = posInGroup + 1;
-            const type = ev.type || "";
-            const isValve = type === "valve" || type === "irrigate";
-            const isLight = type === "light";
-            const isFan   = type === "fan";
-            const color = isValve ? "hsl(152, 75%, 50%)"
-                        : isLight ? "hsl(48, 95%, 60%)"
-                        : isFan   ? "hsl(185, 85%, 55%)"
-                        : "hsl(220, 10%, 55%)";
-            const icon   = isValve ? "💧" : isLight ? "☀" : isFan ? "💨" : "•";
-            const detail = ev.detail
-              ? ev.detail.replace("Valve A (plain water)", "A").replace("Valve B (grow nutrients)", "B").replace("Valve C (bloom nutrients)", "C")
-                  .replace(/\d+s$/, m => `${Math.round(parseInt(m) / 60)}m`).slice(0, 10)
-              : "";
-            const labelText = `${icon} ${detail}`.trim();
-            const yOffset = 12 + posInGroup * 13;
-            return (
-              <ReferenceLine
-                key={`ev-${i}`}
-                x={evTime}
-                stroke={color}
-                strokeDasharray={isValve ? "4 3" : "2 5"}
-                strokeWidth={isValve ? 2 : 1.5}
-                label={(props: any) => {
-                  const { viewBox } = props;
-                  const x = viewBox?.x ?? 0;
-                  const y = viewBox?.y ?? 0;
-                  return (
-                    <text
-                      x={x + 4}
-                      y={y + yOffset}
-                      fontSize={9}
-                      fontWeight={600}
-                      fill={color}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {labelText}
-                    </text>
-                  );
-                }}
-              />
+            const deduped = Object.values(buckets).sort((a, b) =>
+              new Date(a.ts).getTime() - new Date(b.ts).getTime()
             );
+
+            const colCount: Record<string, number> = {};
+            return deduped.flatMap((ev, i) => {
+              const evMs = new Date(ev.ts).getTime();
+              const nearestEntry = chartData.reduce((best, d) => {
+                const diff = Math.abs(new Date(d.ts).getTime() - evMs);
+                return diff < best.diff ? { d, diff } : best;
+              }, { d: chartData[0], diff: Infinity });
+              const evTime = nearestEntry.d.time;
+              const slot = colCount[evTime] ?? 0;
+              if (slot >= 2) return [];
+              colCount[evTime] = slot + 1;
+
+              const type = ev.type || "";
+              const isValve = type === "valve" || type === "irrigate";
+              const isLight = type === "light";
+              const isFan   = type === "fan";
+              const isHumid = type === "humidifier";
+
+              const color = isValve ? "hsl(185, 90%, 55%)"
+                          : isLight ? "hsl(48, 95%, 65%)"
+                          : isFan   ? "hsl(200, 60%, 55%)"
+                          : isHumid ? "hsl(270, 70%, 65%)"
+                          : "hsl(220, 10%, 55%)";
+
+              // Pick the data series value this event corresponds to, to place pill on that line
+              const nd = nearestEntry.d;
+              const seriesValue = isValve ? (nd.moisture ?? 50)
+                                : isLight ? (nd.light ?? 80)
+                                : isFan   ? (nd.fan ?? 40)
+                                : isHumid ? (nd.humidity ?? 60)
+                                : 50;
+
+              const detail = (ev.detail || "")
+                .replace("Valve A (plain water)", "A").replace("Valve B (grow nutrients)", "B").replace("Valve C (bloom nutrients)", "C")
+                .replace(/peak=(\d+)%.*/, "$1%")
+                .replace(/ON (\d+)%.*/, "$1%")
+                .replace(/pump (\d+)s/, (_, s) => `${Math.round(parseInt(s)/60) || 1}m`)
+                .split(" ")[0]
+                .slice(0, 8);
+
+              const pillH = 15;
+              const pillPad = 5;
+              const iconSize = 7;
+              const gap = 3;
+              const textW = detail.length * 5.5;
+              const pillW = pillPad + iconSize + gap + textW + pillPad;
+
+              const iconPath = isValve
+                ? "M0-3.5 C1.5-3.5 3-1.5 3 0 C3 2 1.5 3.5 0 4.5 C-1.5 3.5-3 2-3 0 C-3-1.5-1.5-3.5 0-3.5Z"
+                : isLight
+                ? "M0-2.8a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6zM0-4.5v-1M0 4.5v1M-4.5 0h-1M4.5 0h1M-3.2-3.2l-.7-.7M3.2 3.2l.7.7M3.2-3.2l.7-.7M-3.2 3.2l-.7.7"
+                : isFan
+                ? "M0-1 C0-3.5-3-3-2-1 C-3.5-2-3 2-1 2 C-2 3 2 3 2 1 C3.5 2 3-2 1-2 C2-3-2-3-2 1Z"
+                : isHumid
+                ? "M-3-0.5 Q0-4 3-0.5 Q3 3-0 3.5 Q-3 3-3-0.5Z"
+                : "M0-2a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z";
+
+              return (
+                <ReferenceLine
+                  key={`ev-${i}`}
+                  x={evTime}
+                  stroke="none"
+                  label={(props: any) => {
+                    const cx = (props.viewBox?.x ?? 0);
+                    const chartTop = props.viewBox?.y ?? 0;
+                    const chartH   = props.viewBox?.height ?? 200;
+                    // Place pill centered on the sensor's data line Y position
+                    const lineY = chartTop + chartH * (1 - Math.min(1, seriesValue / domainMax));
+                    const top = lineY - pillH / 2 - slot * (pillH + 4);
+                    const midY = top + pillH / 2;
+                    const left = cx - pillW / 2;
+
+                    return (
+                      <g style={{ pointerEvents: "none" }}>
+                        <rect
+                          x={left} y={top} width={pillW} height={pillH}
+                          rx={pillH / 2} ry={pillH / 2}
+                          fill={color} fillOpacity={0.18}
+                          stroke={color} strokeOpacity={0.55} strokeWidth={0.8}
+                        />
+                        <g transform={`translate(${left + pillPad + iconSize / 2}, ${midY}) scale(0.95)`}>
+                          <path d={iconPath} fill={isValve || isHumid ? color : "none"} fillOpacity={isValve || isHumid ? 0.9 : 0}
+                            stroke={color} strokeWidth={1.1} strokeLinecap="round" strokeLinejoin="round" />
+                        </g>
+                        <text
+                          x={left + pillPad + iconSize + gap}
+                          y={midY + 3.5}
+                          fontSize={8} fontWeight={700}
+                          fill={color} textAnchor="start"
+                          dominantBaseline="auto"
+                        >
+                          {detail}
+                        </text>
+                      </g>
+                    );
+                  }}
+                />
+              );
             });
           })()}
         </AreaChart>
