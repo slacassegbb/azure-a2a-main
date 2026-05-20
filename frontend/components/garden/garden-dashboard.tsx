@@ -14,6 +14,7 @@ import AgentLog from "./agent-log";
 import IrrigationTile from "./irrigation-tile";
 import NextEvent from "./next-event";
 import LastAction from "./last-action";
+import AgentTipsTile from "./agent-tips-tile";
 import EnvironmentChart from "./environment-chart";
 import PotWeightTile from "./pot-weight-tile";
 import PlantInfoTile from "./plant-info-tile";
@@ -227,8 +228,10 @@ export default function GardenDashboard() {
       <main className="max-w-[1400px] mx-auto p-2 md:p-3 xl:p-4 space-y-2 md:space-y-3 xl:space-y-4">
         {/* Row 1: Camera + Light Timeline — full width */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
-          <CameraFeed url={data?.camera_url} timestamp={data?.camera_timestamp} photos={data?.photos || []} />
-          <LightTimeline schedule={schedule} readings={moisture?.readings} gardenConfig={data?.garden_config} humidity={data?.humidifier?.current?.humidity} />
+          <CameraFeed url={data?.camera_url} timestamp={data?.camera_timestamp} photos={data?.photos || []} onTakePhoto={async () => { await sendControl("take_photo", {}); }} />
+          <div className="min-h-[200px] md:min-h-[240px] xl:min-h-[280px]">
+            <LightTimeline schedule={schedule} readings={moisture?.readings} gardenConfig={data?.garden_config} humidity={data?.humidifier?.current?.humidity} />
+          </div>
         </div>
 
         {/* Row 2: Left = sensors/devices | Right = agent intelligence */}
@@ -241,6 +244,9 @@ export default function GardenDashboard() {
               <NextEvent schedule={schedule} />
               <LastAction log={data?.garden_log || []} />
             </div>
+
+            {/* Agent Tips */}
+            <AgentTipsTile log={data?.garden_log || []} />
 
             {/* Agent Knowledge */}
             <PlantInfoTile config={data?.garden_config || null} />
@@ -398,6 +404,9 @@ export default function GardenDashboard() {
               }}
               onTare={async (scaleId) => {
                 await sendControl("tare_scale", { scale_id: scaleId });
+              }}
+              onTogglePotActive={async (potId, active) => {
+                await sendControl("set_pot_active", { pot_id: potId, active });
               }}
             />
 

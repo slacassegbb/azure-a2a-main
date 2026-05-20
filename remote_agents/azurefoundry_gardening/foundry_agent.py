@@ -488,14 +488,14 @@ class FoundryGardeningAgent:
             overwrite=True,
             content_settings=ContentSettings(content_type="application/json"),
         )
-        valve_names = {"a": "plain water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+        valve_names = {"a": "distilled water", "b": "Micro 5-0-1", "c": "empty"}
         logger.info(f"Valve command sent: {request_id} valve={valve} ({valve_names.get(valve, '?')}) duration={duration_seconds}s")
         return request_id
 
     # ── Garden memory log ──────────────────────────────────────────────
     def _garden_log_blob_name(self, user_id: str) -> str:
         """Get per-user garden log blob name."""
-        safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+        safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "user_3"
         return f"{GARDEN_LOG_BLOB_PREFIX}-{safe_id}.json"
 
     def _read_garden_log(self, user_id: str = "default") -> list:
@@ -530,14 +530,6 @@ class FoundryGardeningAgent:
             self._write_garden_config_full(config, user_id)
         except Exception as e:
             logger.warning(f"Failed to clear pending question: {e}")
-
-    def _extract_question(self, text: str) -> str:
-        """Extract the question text from a ❓ Questions section if present."""
-        import re
-        match = re.search(r'❓\s*\*?\*?Questions?\*?\*?[:\s]*(.*?)(?:\n\n|\Z)', text, re.DOTALL | re.IGNORECASE)
-        if match:
-            return match.group(1).strip().split('\n')[0].strip()
-        return ""
 
     def _clean_log_summary(self, text: str) -> str:
         """Strip verbose image description blocks and keep only action/decision text."""
@@ -637,7 +629,7 @@ class FoundryGardeningAgent:
     def _read_garden_config(self, user_id: str = "default") -> str:
         """Read the user's garden description from blob storage."""
         try:
-            safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+            safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "user_3"
             client = self._get_iot_blob_client()
             container = _env("IOT_BLOB_CONTAINER", "garden-images")
             blob = client.get_blob_client(container=container, blob=f"{GARDEN_CONFIG_BLOB_PREFIX}-{safe_id}.json")
@@ -649,7 +641,7 @@ class FoundryGardeningAgent:
     def _read_garden_config_full(self, user_id: str = "default") -> dict:
         """Read the full garden config JSON (including pots)."""
         try:
-            safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+            safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "user_3"
             client = self._get_iot_blob_client()
             container = _env("IOT_BLOB_CONTAINER", "garden-images")
             blob = client.get_blob_client(container=container, blob=f"{GARDEN_CONFIG_BLOB_PREFIX}-{safe_id}.json")
@@ -659,7 +651,7 @@ class FoundryGardeningAgent:
 
     def _write_garden_config_full(self, config: dict, user_id: str = "default"):
         """Write the full garden config JSON back to blob."""
-        safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "default"
+        safe_id = user_id.replace("/", "_").replace("\\", "_") if user_id else "user_3"
         client = self._get_iot_blob_client()
         container = _env("IOT_BLOB_CONTAINER", "garden-images")
         blob = client.get_blob_client(container=container, blob=f"{GARDEN_CONFIG_BLOB_PREFIX}-{safe_id}.json")
@@ -1095,56 +1087,65 @@ class FoundryGardeningAgent:
         vision_extra = ""
         if vision_mode and num_images > 1:
             vision_extra = f"\nYou are viewing {num_images} garden images in chronological order. Each is labeled with its timestamp. Reference dates when describing what you see."
-        return f"""You are an autonomous gardening agent that manages a grow room via IoT sensors and controls. You run on a schedule without human input.{vision_extra}
+        return f"""You are an autonomous gardening agent managing a grow room via IoT sensors and controls. You run on a schedule without human input.{vision_extra}
 
-## YOUR #1 JOB (read this first)
-You are a professional gardener. The Garden Description tells you what was planted and when — it may be minimal (e.g. "planted basil seeds"). That is enough. You are the expert. Determine the growth stage from the planting date and the camera image, then set all controls to match.
+## Who you are
+You are an expert horticulturist with deep knowledge of plant physiology, indoor growing, and environmental control. You know how plants actually work — photosynthesis, transpiration, VPD, nutrient uptake, root development — and you apply that knowledge to make intelligent decisions. You don't follow rigid rules; you reason from first principles about what this specific plant needs right now.
 
-**General growth stage guidelines:**
-- **Germination** → low light (10-20%), high humidity (70-80%), minimal air disturbance  
-- **Seedling** → moderate light (40-60%), humidity 60-70%, gentle air circulation
-- **Vegetative** → full light (80-100%), humidity 50-60%, good airflow
-- **Flowering/Fruiting** → strong light, humidity 40-50%, strong airflow
+## Your job every run
+1. Take a photo and read all sensors (pot weight, top-soil moisture, temperature, humidity)
+2. Identify the plant species and current growth stage — use the planting date, camera image, and your stored Last Growth Assessment together. Trust stored assessment when photo is unclear or lighting is poor. Only update stage when you're confident.
+3. Apply your horticultural expertise to set lights, fan, and humidifier optimally for this plant at this stage
+4. Decide whether to irrigate based on the full picture — weight, moisture, growth stage, species needs, wet/dry cycle health
+5. Flag anything that needs the user's attention
 
 **ANSWER_MODE — when the message starts with "ANSWER_MODE:":**
 The user is replying via SMS to a question you previously asked. Do NOT run a full garden check.
-1. Read the question and answer from the message
-2. Call `save_garden_note` with the appropriate key and value
-3. Call `_clear_pending_question` (use `save_garden_note` with key="pending_question_cleared" value="true" as a signal — the backend handles actual clearing)
-4. Reply with a friendly short confirmation, e.g. "Got it, I've noted you're growing basil! 🌿 I'll use this to tailor your garden care."
+1. Call `save_garden_note` with the appropriate key and value
+2. Reply with a short friendly confirmation
 Do nothing else.
 
-**Every run, do this (normal mode):**
-1. Take a photo, read sensors (weight, temp, humidity, **top-soil moisture** via `get_moisture_data`)
-2. **ANALYZE WHAT YOU SEE**: Look at the actual plants and soil in the photo. What do they look like? Dry soil? Wilted leaves? Healthy growth? Make decisions based on visual observations, not just rules. CRITICAL: Do NOT hallucinate growth that isn't there. White specks in soil are PERLITE, not seedlings. If you only see soil/perlite with no green sprouts breaking the surface, height_pct = 0 and notes should say "no visible sprouts yet."
-3. Determine growth stage from garden description + visual evidence → decide appropriate settings
-4. Call `update_growth_assessment` with what you visually observe — stage, estimated height %, brief notes. This feeds the dashboard and your own memory for next run. MANDATORY every run. If no green growth is visible above the soil, report height_pct=0 — do NOT guess or assume emergence.
-5. Call ALL THREE: `control_lights`, `control_fan`, `control_humidifier` — EVERY RUN, no exceptions
-6. **IRRIGATION DECISION**: Call `get_moisture_data` EVERY RUN. The moisture sensor measures TOP SOIL only (shallow capacitive I2C sensor). Irrigate if ANY of these are true: (a) pot weight drops below ~20% of calibrated range, (b) top soil moisture drops below ~20% for any growth stage, (c) top soil moisture drops below ~35% during germination or seedling stage. Top soil drying out matters at ALL stages — even if weight looks ok, dry surface means the plant needs water.
-7. Report what you did and what you observed
+## How to reason about controls
 
-A run where you skip calling the three control tools is a FAILED run.
+**Lights** — Think in terms of DLI (Daily Light Integral) and the plant's photosynthetic needs at its current stage. Seedlings need gentle light to avoid stress; vegetative plants want high intensity for growth; flowering plants need the right spectrum and intensity to set fruit. Adjust sunrise/sunset times and peak brightness to deliver the right DLI. Consider the plant's natural photoperiod requirements. Call `control_lights` every run.
 
-## Capabilities
-- **Garden Health Analysis**: Analyze camera images for plant health, growth stage, pest issues, disease signs.
-- **Irrigation Control**: Trigger IoT irrigation valves. Primary signal: pot WEIGHT (check `get_pot_config` for calibrated dry/wet weights). Secondary signal: top-soil moisture % from `get_moisture_data` (SeeSaw I2C capacitive sensor — reliable). For germination/seedling stages, moisture % is equally important as weight. If flow rate stored, calculate exact duration: `(wet_weight - current_weight) / g_per_sec`. If no flow rate yet, use 60s calibration run then store it via `calibrate_valve_flow_rate`.
-- **Pot Weight Monitoring (PRIMARY)**: Two scales (`weight_g` = scale_1, `weight2_g` = scale_2). Each pot has calibrated dry/wet weights. Water when the driest pot drops below ~20%. Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
-- **Grow Light Control**: Adjust the autonomous light schedule (sunrise/sunset times, ramp durations, peak brightness). Lights run on the IoT device even without internet.
-- **Fan Control**: On/off for air circulation, humidity/temp control. Can auto-off after a duration.
-- **Humidity Control**: Read Levoit humidifier sensor and control it. If water_lacks is true, alert user to refill.
-- **General**: Pest/disease ID, seasonal advice, composting, soil amendments, companion planting.
+**Humidity & Temperature (VPD)** — Don't just chase a humidity number. Reason about VPD: the combination of temperature and humidity that determines how hard the plant is working to transpire. High VPD = plant stress and faster drying; low VPD = slow transpiration, disease risk. Young seedlings prefer low VPD (~0.4-0.8 kPa); vegetative plants moderate (~0.8-1.2 kPa); flowering higher (~1.2-1.6 kPa). Use temperature + humidity together to estimate VPD and target the right range for the stage. Call `control_humidifier` every run.
 
-## Additional Notes
+**Fan / Airflow** — Airflow does more than cool the room: it strengthens stems (thigmomorphogenesis), prevents damping-off in seedlings, manages leaf boundary layer for CO2 uptake, and helps control VPD. Seedlings need gentle intermittent air; mature plants benefit from stronger continuous circulation. Call `control_fan` every run.
 
-## Response Style
-- Be friendly and encouraging — gardening should be fun!
-- Give practical, actionable advice
-- **TRUST THE IMAGE, NOT THE LOG**: The garden activity log shows HISTORICAL data that may be outdated. The user may have changed their setup entirely. ALWAYS describe what you ACTUALLY SEE in the current image. If the image shows empty pots with no plants, say that — do NOT hallucinate plants just because the log mentions them. The image is ground truth.
-- If you see potential problems, explain them clearly but don't be alarmist
-- **Always explain control decisions**: When you call control_lights, control_fan, or control_humidifier, briefly state in your report WHY you chose those specific values (e.g. "Set fan to 25% — germination stage needs minimal air disturbance and humidity is already at target"). This helps the user understand and audit your decisions.
-- **ALWAYS end with a "🌱 Recommendations" section** — this is MANDATORY, never skip it. List 2-3 actionable bullet points of things you CANNOT do automatically that the user should handle manually. Pick tips relevant to what you actually observe.
-- **Asking questions**: If the Garden Profile is missing essential info (plant types, growing goals, soil mix, nutrient schedule, or pot contents), end your response with a "❓ Questions" section containing 1 question to fill in the most important gap. This is how you build up knowledge over time. Once the basics are covered, only ask if something in the image genuinely confuses you. When they answer, save it with `save_garden_note` so you remember next time. **IMPORTANT: Never ask about something already in the Garden Profile.** The key `plants` OR `seeds` both mean the plant type is known — if either is present, do NOT ask what they're growing. Always use `plants` as the key when saving plant type info.
-- **Night-time awareness**: The camera has no night vision. If it is currently nighttime (roughly 8 PM – 7 AM Eastern), snapshots will be completely dark. Do NOT retry taking photos when it's dark — instead, tell the user the image is dark because it's nighttime and suggest they try again during daylight hours or turn on a grow light first.
+**Irrigation** — Think about wet/dry cycles, not just thresholds. Most plants benefit from letting the substrate partially dry between waterings to encourage root zone oxygenation and prevent root rot. Primary signal: pot weight vs calibrated dry/wet range. Secondary: top-soil moisture from `get_moisture_data` (surface capacitive sensor). For germination/early seedling: keep surface consistently moist — surface drying is critical at this stage. For established plants: allow partial dry-down before rewatering. Calculate duration from weight deficit and flow rate when calibrated. Only irrigate ACTIVE pots.
+
+**Nutrients / Fertilizer** — You control nutrient delivery directly by choosing the right valve. Valve contents are stored in your garden notes under keys `valve_a`, `valve_b`, `valve_c` — always check these before watering. If a valve note is missing, ask the user what's in that tank and save the answer. Never use a valve whose contents are unknown.
+
+Reasoning about which valve to use:
+- Use the plain water valve for germination, early seedling stage (before first true leaves), flushing runs, and leaching
+- Switch to the nutrient valve once the plant has its first true leaves — start at 25% label rate
+- Alternate with plain water periodically to prevent salt buildup in the substrate
+- When the user tells you a valve's contents have changed, save the updated note immediately with `save_garden_note`
+
+Reason about NPK ratio for the current growth stage: Micro (5-0-1) provides calcium, magnesium, and micronutrients — appropriate from seedling through harvest. Grow (high N) for vegetative. Bloom (high P/K) for flowering/fruiting. When additional solutions are available, choose based on stage.
+
+## What to watch for
+Use your plant knowledge to spot problems early from the image and sensor data: stretching/etiolation (light too far or too weak), leaf curl (heat stress, overwatering, or VPD too high), yellowing (nutrient deficiency — which one based on pattern), damping-off risk (too wet + poor airflow), root binding signs, abnormal growth patterns. Don't be alarmist but don't miss real issues.
+
+## Sensor tools
+- `get_moisture_data` — top-soil capacitive sensor (surface only) + temperature. Call every run.
+- Pot weights: `weight_g` = scale_1, `weight2_g` = scale_2. Calibrated dry/wet weights in `get_pot_config`. Only monitor ACTIVE pots.
+- Auto-recalibrate wet weight after watering if weight exceeds stored baseline by 20g+ (plant growth). Auto-recalibrate dry weight if pot drops below stored dry baseline.
+- If flow rate not yet stored, use 60s calibration run then store via `calibrate_valve_flow_rate`.
+
+## Image analysis rules
+- White specks in soil = PERLITE, not seedlings. Do not hallucinate sprouts.
+- If no green breaking the surface: height_pct = 0, note "no visible sprouts yet"
+- If photo is dark: lights are off, skip growth assessment update, keep stored stage
+- Do NOT change light settings when photo is too dark or unclear to assess plant
+
+## Response style
+- Write like an expert who cares — confident, specific, not generic
+- Explain your reasoning briefly: why you set lights to X, why you did or didn't water
+- **ALWAYS end with a "🌱 Recommendations" section** — MANDATORY. List 1-3 specific actions the user needs to take that you cannot do automatically. Base these on what you actually observed this run. If the plant genuinely needs nothing from the user right now, say "Everything looks good — no action needed." Never invent tips just to fill the section.
+- **Asking questions**: Every run, call `ask_user_question` with one question to build context — unless you already know enough to make fully tailored decisions. Never ask about something already in Already-Known Facts. Never write questions in prose — use the tool. Save answers with `save_garden_note`.
+- **Night-time**: Dark image = lights off. Don't retry. Keep stored growth assessment unchanged.
 
 Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 """
@@ -1218,7 +1219,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_lights",
-            "description": "Update the grow light schedule. The lights run autonomously on the IoT device simulating natural sunlight with sunrise/sunset ramps. Only provide the parameters you want to change — unspecified values keep their current setting. Call this proactively whenever the current light settings don't match the plant's needs based on your garden analysis.",
+            "description": "Update the grow light schedule. The lights run autonomously on the IoT device simulating natural sunlight with sunrise/sunset ramps. Only provide the parameters you want to change — unspecified values keep their current setting. Call every run to ensure the schedule matches the current growth stage.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1245,7 +1246,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_fan",
-            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Use for ventilation, humidity control, cooling, or preventing mold. Call this proactively based on growth stage — you do NOT need the user to ask.",
+            "description": "Control the grow room fan for air circulation. The fan is on a KP405 dimmer so you can set the speed (1-100%). Call every run based on current sensor readings and growth stage.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1268,7 +1269,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "irrigate_with_valve",
-            "description": "Irrigate the garden using a specific valve/reservoir. Valve A = plain water (flushing, light watering). Valve B = Diablo Grow 2-1-6 (vegetative growth, nitrogen/potassium). Valve C = Diablo Bloom 0-5-1 (flowering, phosphorus). Choose the valve based on the plant's growth stage. Opens the valve and runs the pump for the specified duration.",
+            "description": "Irrigate the garden using a specific valve/reservoir. Check your garden notes (valve_a, valve_b, valve_c keys) to know what each valve contains before choosing. Choose the valve based on the plant's current growth stage and nutrient needs — use plain water for flushing/leaching/germination, and the appropriate nutrient solution when the plant is ready. Never use a valve whose contents are unknown or marked empty. Opens the valve and runs the pump for the specified duration.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1311,7 +1312,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         {
             "type": "function",
             "name": "control_humidifier",
-            "description": "Control the Levoit LV600S humidifier and read room humidity. Actions: 'status' to read current humidity level, 'on' to turn on, 'off' to turn off, 'auto' to set auto mode with target humidity. Call proactively based on growth stage needs.",
+            "description": "Control the Levoit LV600S humidifier and read room humidity. Actions: 'status' to read current humidity level, 'on' to turn on, 'off' to turn off, 'auto' to set auto mode with target humidity. Call every run to maintain the right humidity for the current growth stage.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1421,6 +1422,21 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         },
         {
             "type": "function",
+            "name": "ask_user_question",
+            "description": "Ask the user a question to build up your knowledge of their garden. Call this every run until you have enough context to make fully confident, tailored decisions — covering things like their setup, soil, goals, experience, and anything puzzling you observe in the image. Pick the single most valuable missing piece each run. NEVER ask about something already in the Already-Known Facts section.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the user, written in plain friendly language.",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+        {
+            "type": "function",
             "name": "update_growth_assessment",
             "description": "Update the visual growth assessment based on what you see in the current photo. Call this EVERY RUN after analyzing the image. This feeds the dashboard plant display and your own memory for the next run so you can track progression.",
             "parameters": {
@@ -1464,13 +1480,27 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         elif tool_name == "capture_fresh_photo":
             try:
+                # Skip photo if lights are currently off per the schedule
+                schedule = await asyncio.to_thread(self._fetch_light_schedule)
+                if schedule:
+                    utc_offset = schedule.get("utc_offset_hours", 0)
+                    now_local_hour = (datetime.datetime.now(datetime.timezone.utc).hour + utc_offset) % 24
+                    sunrise = schedule.get("sunrise_hour", 0)
+                    sunset = schedule.get("sunset_hour", 24) % 24  # normalize 24→0
+                    if sunrise < sunset:
+                        lights_on = sunrise <= now_local_hour < sunset
+                    else:
+                        # wraps past midnight (e.g. sunrise=6, sunset=1 means on until 1AM)
+                        lights_on = now_local_hour >= sunrise or now_local_hour < sunset
+                    if not lights_on:
+                        return "Lights are currently off per the schedule — skipping photo. Sensors are still available for monitoring.", images_data
+
                 fresh = await self._trigger_and_wait_for_capture()
                 if fresh:
                     img_bytes = await asyncio.to_thread(self._fetch_iot_image)
                     images_data.append(("latest.jpg", img_bytes))
                     return "Fresh photo captured and ready for analysis.", images_data
                 else:
-                    # Timeout — use existing image
                     img_bytes = await asyncio.to_thread(self._fetch_iot_image)
                     images_data.append(("latest.jpg", img_bytes))
                     return "Camera didn't respond in time. Using most recent image.", images_data
@@ -1533,7 +1563,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 if scale_weights:
                     # Include pot calibration context
                     try:
-                        _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                        _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                         pot_config = await asyncio.to_thread(self._read_garden_config_full, _user_id)
                         pots = pot_config.get("pots", [])
                         for p in pots:
@@ -1617,7 +1647,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 valve = tool_args.get("valve", "a").lower()
                 duration_s = min(tool_args.get("duration_seconds", 60), 120)  # hard cap 120s
                 request_id = await asyncio.to_thread(self._trigger_valve_irrigation, valve, duration_s)
-                valve_names = {"a": "plain water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+                valve_names = {"a": "distilled water", "b": "Micro 5-0-1", "c": "empty"}
                 valve_name = valve_names.get(valve, valve)
                 self._append_garden_event("valve", f"Valve {valve.upper()} ({valve_name}) {duration_s}s")
                 return f"Valve irrigation started (request: {request_id}). Valve {valve.upper()} ({valve_name}) + pump running for {duration_s} seconds.", images_data
@@ -1666,7 +1696,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         elif tool_name == "clear_garden_log":
             try:
-                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                 client = self._get_iot_blob_client()
                 container = _env("IOT_BLOB_CONTAINER", "garden-images")
                 blob = client.get_blob_client(container=container, blob=self._garden_log_blob_name(user_id))
@@ -1681,7 +1711,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         elif tool_name == "set_pot_weight":
             try:
-                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                 pot_id = tool_args.get("pot_id", "pot_1")
                 weight_type = tool_args.get("weight_type", "dry")
                 pot_name = tool_args.get("pot_name")
@@ -1703,7 +1733,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         elif tool_name == "get_pot_config":
             try:
-                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                 config = await asyncio.to_thread(self._read_garden_config_full, user_id)
                 pots = config.get("pots", [])
                 flow_rates = config.get("valve_flow_rates", {})
@@ -1729,7 +1759,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                         lines.append(line)
                 else:
                     lines.append("No pots configured yet. Use 'set dry weight' or 'set wet weight' to calibrate a pot.")
-                valve_names = {"a": "Plain Water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+                valve_names = {"a": "Distilled Water", "b": "Micro 5-0-1", "c": "Empty"}
                 lines.append("\n**Valve flow rates:**")
                 for v in ["a", "b", "c"]:
                     rate = flow_rates.get(v, {})
@@ -1744,7 +1774,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         elif tool_name == "calibrate_valve_flow_rate":
             try:
-                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                 valve = tool_args.get("valve", "a").lower()
                 g_per_sec = tool_args.get("g_per_sec", 0)
                 if g_per_sec <= 0:
@@ -1757,7 +1787,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                 }
                 config["valve_flow_rates"] = flow_rates
                 await asyncio.to_thread(self._write_garden_config_full, config, user_id)
-                valve_names = {"a": "Plain Water", "b": "Grow 2-1-6", "c": "Bloom 0-5-1"}
+                valve_names = {"a": "Distilled Water", "b": "Micro 5-0-1", "c": "Empty"}
                 self._append_garden_event("flow_calibration", f"Valve {valve.upper()} = {g_per_sec:.2f} g/s")
                 return f"Valve {valve.upper()} ({valve_names.get(valve, valve)}) flow rate saved: {g_per_sec:.2f} g/s.", images_data
             except Exception as e:
@@ -1765,7 +1795,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
 
         elif tool_name == "save_garden_note":
             try:
-                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                 key = tool_args.get("key", "").strip()
                 value = tool_args.get("value", "").strip()
                 if not key or not value:
@@ -1782,14 +1812,36 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
             except Exception as e:
                 return f"Failed to save note: {e}", images_data
 
+        elif tool_name == "ask_user_question":
+            try:
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
+                question = tool_args.get("question", "").strip()
+                if not question:
+                    return "Question text is required.", images_data
+                await asyncio.to_thread(self._save_pending_question, question, user_id)
+                logger.info(f"Pending question saved via tool: {question[:80]}")
+                return f"❓ {question}", images_data
+            except Exception as e:
+                return f"Failed to save question: {e}", images_data
+
         elif tool_name == "update_growth_assessment":
             try:
-                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+                user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
                 stage = tool_args.get("stage", "unknown")
                 height_pct = int(tool_args.get("height_pct", 0))
                 notes = tool_args.get("notes", "")
                 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 config = await asyncio.to_thread(self._read_garden_config_full, user_id)
+
+                # Never allow a stage downgrade — growth only moves forward
+                stage_order = ["germination", "seedling", "vegetative", "flowering", "harvest"]
+                current = config.get("growth_assessment", {}).get("stage", "germination")
+                current_idx = stage_order.index(current) if current in stage_order else 0
+                new_idx = stage_order.index(stage) if stage in stage_order else 0
+                if new_idx < current_idx:
+                    logger.info(f"Blocked stage downgrade: {current} → {stage}, keeping {current}")
+                    return f"Growth assessment unchanged: keeping '{current}' (cannot downgrade from a higher stage based on a dark or unclear image).", images_data
+
                 config["growth_assessment"] = {
                     "stage": stage,
                     "height_pct": max(0, min(100, height_pct)),
@@ -1854,7 +1906,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         instructions = self._get_agent_instructions(vision_mode=False) + f"\nCurrent date/time: {datetime.datetime.now().astimezone().isoformat()}"
 
         # Extract user_id from context_id for per-user memory
-        _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "default"
+        _user_id = context_id.split("::")[0] if context_id and "::" in context_id else "user_3"
 
         # Load garden config (user's garden description + growth assessment)
         try:
@@ -1862,6 +1914,26 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
             garden_desc = garden_config_full.get("description", "")
             if garden_desc.strip():
                 instructions += "\n\n## Garden Description (from the user)\n" + garden_desc
+            # Explicitly list known notes so the LLM never asks about them
+            known_notes = garden_config_full.get("notes", {})
+            if known_notes:
+                known_lines = "\n".join(f"  - {k}: {v}" for k, v in known_notes.items() if k != "pending_question_cleared")
+                if known_lines:
+                    instructions += (
+                        "\n\n## Already-Known Facts (NEVER ask questions about any of these):\n"
+                        + known_lines
+                    )
+            active_pots = garden_config_full.get("active_pots", {})
+            if active_pots:
+                active_list = [k for k, v in active_pots.items() if v]
+                inactive_list = [k for k, v in active_pots.items() if not v]
+                if inactive_list:
+                    instructions += (
+                        f"\n\n## Active Pots\n"
+                        f"- Active: {', '.join(active_list) if active_list else 'none'}\n"
+                        f"- Disabled (ignore for irrigation/weight decisions): {', '.join(inactive_list)}\n"
+                        f"Do NOT irrigate or factor in weight readings from disabled pots."
+                    )
             growth = garden_config_full.get("growth_assessment")
             if growth:
                 instructions += (
@@ -1875,14 +1947,26 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         except Exception as e:
             logger.warning(f"Failed to load garden config: {e}")
 
-        # Load garden activity log for context
+        # Inject current light schedule so agent knows what's already set before deciding to change it
+        try:
+            sched = await asyncio.to_thread(self._fetch_light_schedule)
+            instructions += (
+                f"\n\n## Current Light Schedule (already active on the IoT device)\n"
+                f"- Sunrise: {sched.get('sunrise_hour')}:00, Sunset: {sched.get('sunset_hour')}:00\n"
+                f"- Peak brightness: {sched.get('peak_brightness')}%, Night: {sched.get('night_brightness')}%\n"
+                f"- Sunrise ramp: {sched.get('sunrise_ramp_min')}min, Sunset ramp: {sched.get('sunset_ramp_min')}min"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load light schedule for context: {e}")
+
+        # Inject last 6 log entries so agent can reason about trends across runs
         try:
             log_entries = await asyncio.to_thread(self._read_garden_log, _user_id)
             log_context = self._format_garden_log_for_context(log_entries)
             if log_context:
                 instructions += "\n\n" + log_context
         except Exception as e:
-            logger.warning(f"Failed to load garden log: {e}")
+            logger.warning(f"Failed to load garden log for context: {e}")
 
         # Detect ANSWER_MODE — user is replying to a question we asked via SMS
         _is_answer_mode = user_message.strip().startswith("ANSWER_MODE:")
@@ -1896,7 +1980,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
         # Build conversation history for the loop
         conversation = [{"role": "user", "content": user_message}]
         all_images: List[tuple] = []
-        max_rounds = 2 if _is_answer_mode else 4  # answer mode needs fewer rounds
+        max_rounds = 2 if _is_answer_mode else 10
 
         yield "Analyzing your request..."
 
@@ -1963,7 +2047,7 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                     yield "Sending fan command..."
                 elif tool_name == "irrigate_with_valve":
                     valve = tool_args.get("valve", "a")
-                    valve_names = {"a": "plain water", "b": "Grow nutrients", "c": "Bloom nutrients"}
+                    valve_names = {"a": "distilled water", "b": "Micro 5-0-1", "c": "empty"}
                     yield f"Opening valve {valve.upper()} ({valve_names.get(valve, valve)}) + pump..."
                 elif tool_name == "create_timelapse":
                     yield "Creating timelapse video..."
@@ -2070,16 +2154,6 @@ Current date/time: {datetime.datetime.now().astimezone().isoformat()}
                         await asyncio.to_thread(self._append_garden_log, final_text[:3000], _user_id)
                     except Exception as e:
                         logger.warning(f"Failed to append garden log: {e}")
-                    # Save any question asked so SMS replies can be routed back to us
-                    try:
-                        question = self._extract_question(final_text)
-                        if question:
-                            await asyncio.to_thread(self._save_pending_question, question, _user_id)
-                            logger.info(f"Saved pending question for SMS reply routing: {question[:80]}")
-                        else:
-                            await asyncio.to_thread(self._clear_pending_question, _user_id)
-                    except Exception as e:
-                        logger.warning(f"Failed to save pending question: {e}")
                 else:
                     yield "I analyzed your garden but couldn't generate a response. Please try again."
                 return
